@@ -103,10 +103,10 @@ using I_MOV_BYTE_PTR_R64_R64_T           = Instruction<0x16, uint8_t, uint8_t>;
 using I_MOV_WORD_PTR_R64_R64_T           = Instruction<0x17, uint8_t, uint8_t>;
 using I_MOV_DWORD_PTR_R64_R64_T          = Instruction<0x18, uint8_t, uint8_t>;
 using I_MOV_QWORD_PTR_R64_R64_T          = Instruction<0x19, uint8_t, uint8_t>;
-using I_MOV_BYTE_PTR_I64_R64_T           = Instruction<0x1A, uint8_t, uint64_t>;
-using I_MOV_WORD_PTR_I64_R64_T           = Instruction<0x1B, uint8_t, uint64_t>;
-using I_MOV_DWORD_PTR_I64_R64_T          = Instruction<0x1C, uint8_t, uint64_t>;
-using I_MOV_QWORD_PTR_I64_R64_T          = Instruction<0x1D, uint8_t, uint64_t>;
+using I_MOV_BYTE_PTR_I64_R64_T           = Instruction<0x1A, uint64_t, uint8_t>;
+using I_MOV_WORD_PTR_I64_R64_T           = Instruction<0x1B, uint64_t, uint8_t>;
+using I_MOV_DWORD_PTR_I64_R64_T          = Instruction<0x1C, uint64_t, uint8_t>;
+using I_MOV_QWORD_PTR_I64_R64_T          = Instruction<0x1D, uint64_t, uint8_t>;
 using I_ADD_R64_R64_T                    = Instruction<0x1E, uint8_t, uint8_t>;
 using I_SUB_R64_R64_T                    = Instruction<0x1F, uint8_t, uint8_t>;
 using I_MUL_R64_R64_T                    = Instruction<0x20, uint8_t, uint8_t>;
@@ -158,9 +158,10 @@ using I_SYSCALL_T                        = Instruction<0x50>;
 
 struct UnresolvedAddress
 {
+    enum class AdddressType {Absolute, Relative};
+    AdddressType addresstype;
     size_t pc;
-    size_t address;
-    size_t sz;
+    size_t offset;
     std::string symbol;
     size_t number;
 };
@@ -180,10 +181,76 @@ public:
         std::string line;
         size_t number = 0;
         while (std::getline(ss, line))
-        {
             parse(number++, line);
-        }
+        fillUnresolved();
     };
+
+    enum class OperandType {NA, R64, IN64, I64, I32, I16, I8, BPR64, WPR64, DPR64, QPR64, BPI64, WPI64, DPI64, QPI64, BPIN64, WPIN64, DPIN64, QPIN64};
+    static OperandType getRegType(const std::string& pOperand)
+    {
+        if (1 == pOperand.size() && pOperand[0]>='a' && pOperand[0]<='z')
+            return OperandType::R64;
+        return OperandType::NA;
+    }
+
+    static OperandType getOperandType(const std::string& pOperand)
+    {
+        auto regtype = getRegType(pOperand);
+        if (OperandType::NA != regtype)
+            return regtype;
+        std::regex pattern("^(.*?)[ ]+ptr[ ]*\\[(.*?)\\]$");
+        std::smatch match;
+        if (std::regex_match(pOperand, match, pattern))
+        {
+            auto ptrval = match[2].str();
+            auto regtype = getRegType(ptrval);
+            auto ptrsize = match[1].str();
+            if (OperandType::R64 == regtype)
+            {   
+                if ("byte" == ptrsize) return OperandType::BPR64;
+                else if ("word" == ptrsize) return OperandType::WPR64;
+                else if ("dword" == ptrsize) return OperandType::DPR64;
+                else if ("qword" == ptrsize) return OperandType::QPR64;
+                else throw std::runtime_error(std::string{} + "Unknown pointer size: " + ptrsize);
+            }
+            try
+            {
+                std::stoul(ptrval);
+                if ("byte" == ptrsize) return OperandType::BPI64;
+                else if ("word" == ptrsize) return OperandType::WPI64;
+                else if ("dword" == ptrsize) return OperandType::DPI64;
+                else if ("qword" == ptrsize) return OperandType::QPI64;
+                throw std::runtime_error(std::string{} + "Unknown pointer size: " + ptrsize);
+            }
+            catch (...)
+            {
+                if ("byte" == ptrsize) return OperandType::BPIN64;
+                else if ("word" == ptrsize) return OperandType::WPIN64;
+                else if ("dword" == ptrsize) return OperandType::DPIN64;
+                else if ("qword" == ptrsize) return OperandType::QPIN64;
+                throw std::runtime_error(std::string{} + "Unknown pointer size: " + ptrsize);
+            }
+        }
+        try
+        {
+            // TODO: Parse hex, bin, or octal and double
+            size_t sval = std::stoul(pOperand);
+            if (!(sval&0xFFFFFFFFFFFFFF00)) return OperandType::I8;
+            else if (!(sval&0xFFFFFFFFFFFF0000)) return OperandType::I16;
+            else if (!(sval&0xFFFFFFFF00000000)) return OperandType::I32;
+            else return OperandType::I64;
+        }
+        catch (...)
+        {
+            // TODO: Validate if label is valid
+            return OperandType::IN64;
+        }
+    }
+
+    std::vector<uint8_t>& getByteCode()
+    {
+        return mByteCode;
+    }
 private:
     std::vector<std::string> split(const std::string& s, char delimiter)
     {
@@ -205,7 +272,7 @@ private:
             return;
         if (':' == tokens[0].back())
             return label(pNumber, std::string(tokens[0].data(), tokens[0].size()-1));
-        if (std::any_of(mKeywordData.begin(), mKeywordData.end(), [&tokens](const auto& i){return i==tokens[0];}))
+        if (std::any_of(mKeywordData.begin(), mKeywordData.end(), [&tokens](const auto& i){return i==tokens[0]; }))
             return dataKeyword(pNumber, pLine, tokens);
         return instruction(pNumber, pLine);
     }
@@ -225,6 +292,7 @@ private:
         {
             std::regex pattern(".*?'(.*?)'.*?");
             std::smatch match;
+
             if (!std::regex_match(pLine, match, pattern))
                 throw std::runtime_error(std::string{} + "Ascii data failed: in line number: " + std::to_string(pNumber));
 
@@ -236,101 +304,219 @@ private:
             mByteCode.back() = 0;
             return;
         }
+        // TODO: byte word dword qword array
         throw std::runtime_error(std::string{} + "Unimplemented data keyword! line: " + pLine);
     }
 
-    enum class OperandType {NA, R64, RF64, I64, IN64, IF64, I8, BPR64, WPR64, DPR64, QPR64, BPI64, WPI64, DPI64, QPI64, BPIN64, WPIN64, DPIN64, QPIN64};
-    OperandType getRegType(const std::string& pOperand)
+    template <typename T>
+    void encodeMov8_8(const std::string& a, const std::string& b)
     {
-        if (1 == pOperand.size() && (pOperand[0]>='a' || pOperand[0]<='z'))
-            return OperandType::R64;
-        else if (2 == pOperand.size() && pOperand[0]=='f' && (pOperand[1]>='a' || pOperand[1]<='z'))
-            return OperandType::RF64;
-        return OperandType::NA;
+        auto basesize = mByteCode.size();
+        mByteCode.resize(basesize + T::size());
+        T i(mByteCode.data()+basesize);
+        i.template get<0>() = a.back()-'a';
+        i.template get<1>() = b.back()-'a';
+        i.encode();
     }
 
-    OperandType getOperandType(const std::string& pOperand)
+    template <typename T>
+    void encodeMov8_S(const std::string& a, const std::string& b)
     {
-        auto regtype = getRegType(pOperand)
-        if (OperandType::NA != regtype)
-            return regtype;
-            std::regex pattern("(.*?)[ ]+ptr[ ]+(\\[(.*?)*\\])");
-        std::smatch match;
-        if (std::regex_match(pOperand, match, pattern) && 3==match.size())
-        {
-            auto ptrval = match[2].str();
-            auto regtype = getRegType(ptrval);
-            auto ptrsize = match[1].str();
-            if (OperandType::R64 == regtype)
-                if ("byte" == ptrsize) return OperandType::BPR64;
-                else if ("word" == ptrsize) return OperandType::WPR64;
-                else if ("dword" == ptrsize) return OperandType::DPR64;
-                else if ("qword" == ptrsize) return OperandType::QPR64;
-                else throw std::runtime_error(std::string{} + "Unknown pointer size: " + ptrsize);
-            try
-            {
-                std::stoul(ptrval);
-                if ("byte" == ptrsize) return OperandType::BPI64;
-                else if ("word" == ptrsize) return OperandType::WPI64;
-                else if ("dword" == ptrsize) return OperandType::DPI64;
-                else if ("qword" == ptrsize) return OperandType::QPI64;
-                throw std::runtime_error(std::string{} + "Unknown pointer size: " + ptrsize);
-            }
-            catch (...)
-            {
-                if ("byte" == ptrsize) return OperandType::BPIN64;
-                else if ("word" == ptrsize) return OperandType::WPIN64;
-                else if ("dword" == ptrsize) return OperandType::DPIN64;
-                else if ("qword" == ptrsize) return OperandType::QPIN64;
-                throw std::runtime_error(std::string{} + "Unknown pointer size: " + ptrsize);
-            }
-            [[unreachable]];
-        }
+        auto basesize = mByteCode.size();
+        mByteCode.resize(basesize + T::size());
+        T i(mByteCode.data()+basesize);
+        i.template get<0>() = a.back()-'a';
+        i.template get<1>() = std::stoul(b);
+        i.encode();
+        return;
+    }
+    
+    template <typename T>
+    void encodeMov64_8(const std::string& a, const std::string& b)
+    {
+        auto basesize = mByteCode.size();
+        mByteCode.resize(basesize + T::size());
+        T i(mByteCode.data()+basesize);
+        i.template get<0>() = size_t(std::stoul(a));
+        i.template get<1>() = b.back()-'a';
+        i.encode();
+        return;
+    }
+
+    template <typename T>
+    void encodeMov64N_8(size_t pNumber, const std::string& a, const std::string& b)
+    {
+        auto found = mSymbolTable.find(a);
+        if (mSymbolTable.end()!=found)
+            return encodeMov64_8<T>(std::to_string(found->second.address), b);
+        auto basesize = mByteCode.size();
+        mUnresolvedAddress.emplace_back(UnresolvedAddress{UnresolvedAddress::AdddressType::Absolute, basesize, sizeof(T::opcode), a, pNumber});
+        return encodeMov64_8<T>("0", b);
     }
 
     void instruction(size_t pNumber, std::string& pLine)
     {
-        std::regex pattern("^[ ]*([a-z]+)(?:[ ]+([A-Za-z0-9_]+))*(?:[ ]*,[ ]*([A-Za-z0-9_]+))*[ ]*(?:#.*)*");
+        std::regex pattern("^[ ]*([a-z]+)(?:[ ]+([A-Za-z0-9_\\-\\[\\] ]+))*(?:[ ]*,[ ]*([A-Za-z0-9_\\-\\[\\] ]+))*[ ]*(?:#.*)*");
         std::smatch match;
+
         if (!std::regex_match(pLine, match, pattern))
-            throw std::runtime_error(std::string{} + "Ascii data failed: in line number: " + std::to_string(pNumber));
+            throw std::runtime_error(std::string{} + "Instruction parse failed: in line number: " + std::to_string(pNumber));
+
         auto ins = match[1].str();
         auto a = match.size()>2 ? match[2].str() : std::string{};
         auto b = match.size()>3 ? match[3].str() : std::string{};
+        OperandType at = {};
+        OperandType bt = {};
+
+        if (a.size()) 
+            at = getOperandType(a);
+        if (b.size()) 
+            bt = getOperandType(b);
+
         std::cout << "ins: " << ins << "\n";
         std::cout << "a: " << a << "\n";
         std::cout << "b: " << b << "\n";
-        // if ("mov"==pToken[0]) {}
-        // else if ("movzx"==pToken[0]) {}
-        // else if ("movsx"==pToken[0]) {}
-        // else if ("add"==pToken[0]) {}
-        // else if ("sub"==pToken[0]) {}
-        // else if ("mul"==pToken[0]) {}
-        // else if ("div"==pToken[0]) {}
-        // else if ("sar"==pToken[0]) {}
-        // else if ("shr"==pToken[0]) {}
-        // else if ("shl"==pToken[0]) {}
-        // else if ("and"==pToken[0]) {}
-        // else if ("or"==pToken[0]) {}
-        // else if ("xor"==pToken[0]) {}
-        // else if ("not"==pToken[0]) {}
-        // else if ("cmp"==pToken[0]) {}
-        // else if ("je"==pToken[0]) {}
-        // else if ("jg"==pToken[0]) {}
-        // else if ("jge"==pToken[0]) {}
-        // else if ("jl"==pToken[0]) {}
-        // else if ("jle"==pToken[0]) {}
-        // else if ("ja"==pToken[0]) {}
-        // else if ("jae"==pToken[0]) {}
-        // else if ("jb"==pToken[0]) {}
-        // else if ("jbe"==pToken[0]) {}
-        // else if ("call"==pToken[0]) {}
-        // else if ("ret"==pToken[0]) {}
-        // else if ("push"==pToken[0]) {}
-        // else if ("pop"==pToken[0]) {}
-        // else if ("syscall"==pToken[0]) {}
-    }
+        if ("mov"==ins)
+        {
+            if (OperandType::R64==at && OperandType::R64==bt)
+                return encodeMov8_8<I_MOV_R64_R64_T>(a, b);
 
+            if (OperandType::R64==at && OperandType::I8==bt)
+                return encodeMov8_S<I_MOV_R64_I8_T>(a, b);
+            if (OperandType::R64==at && OperandType::I16==bt)
+                return encodeMov8_S<I_MOV_R64_I16_T>(a, b);
+            if (OperandType::R64==at && OperandType::I32==bt)
+                return encodeMov8_S<I_MOV_R64_I32_T>(a, b);
+            if (OperandType::R64==at && OperandType::I64==bt)
+                return encodeMov8_S<I_MOV_R64_I64_T>(a, b);
+
+            if (OperandType::R64==at && OperandType::IN64==bt)
+            {
+                auto basesize = mByteCode.size();
+                mByteCode.resize(basesize + I_MOV_R64_I64_T::size());
+                I_MOV_R64_I64_T i(mByteCode.data()+basesize);
+                i.get<0>() = a.back()-'a';
+                auto found = mSymbolTable.find(b);
+                if (mSymbolTable.end()==found)
+                {
+                    i.get<1>() = 0;
+                    mUnresolvedAddress.emplace_back(UnresolvedAddress{UnresolvedAddress::AdddressType::Absolute, basesize, sizeof(I_MOV_R64_I64_T::opcode)+1, b, pNumber});
+                }
+                else
+                {
+                    i.get<1>() = found->second.address;
+                }
+                i.encode();
+                return;
+            }
+
+            // TODO: reuse from getOperandType 
+            std::regex pattern("^(.*?)[ ]+ptr[ ]*\\[(.*?)\\]$");
+            std::smatch match;
+            std::string ptrval;
+            if (std::regex_match(a, match, pattern))
+                ptrval = match[2].str();
+
+            if (OperandType::BPR64==at && OperandType::R64==bt)
+                return encodeMov8_8<I_MOV_BYTE_PTR_R64_R64_T>(ptrval, b);
+            if (OperandType::WPR64==at && OperandType::R64==bt)
+                return encodeMov8_8<I_MOV_WORD_PTR_R64_R64_T>(ptrval, b);
+            if (OperandType::DPR64==at && OperandType::R64==bt)
+                return encodeMov8_8<I_MOV_DWORD_PTR_R64_R64_T>(ptrval, b);
+            if (OperandType::QPR64==at && OperandType::R64==bt)
+                return encodeMov8_8<I_MOV_QWORD_PTR_R64_R64_T>(ptrval, b);
+
+            if (OperandType::BPI64==at && OperandType::R64==bt)
+                return encodeMov64_8<I_MOV_BYTE_PTR_I64_R64_T>(ptrval, b);
+            if (OperandType::WPI64==at && OperandType::R64==bt)
+                return encodeMov64_8<I_MOV_WORD_PTR_I64_R64_T>(ptrval, b);
+            if (OperandType::DPI64==at && OperandType::R64==bt)
+                return encodeMov64_8<I_MOV_DWORD_PTR_I64_R64_T>(ptrval, b);
+            if (OperandType::QPI64==at && OperandType::R64==bt)
+                return encodeMov64_8<I_MOV_QWORD_PTR_I64_R64_T>(ptrval, b);
+
+            if (OperandType::BPIN64==at && OperandType::R64==bt)
+                return encodeMov64N_8<I_MOV_BYTE_PTR_I64_R64_T>(pNumber, ptrval, b);
+            if (OperandType::WPIN64==at && OperandType::R64==bt)
+                return encodeMov64N_8<I_MOV_WORD_PTR_I64_R64_T>(pNumber, ptrval, b);
+            if (OperandType::DPIN64==at && OperandType::R64==bt)
+                return encodeMov64N_8<I_MOV_DWORD_PTR_I64_R64_T>(pNumber, ptrval, b);
+            if (OperandType::QPIN64==at && OperandType::R64==bt)
+                return encodeMov64N_8<I_MOV_QWORD_PTR_I64_R64_T>(pNumber, ptrval, b);
+        }
+        else if ("movzx"==ins)
+        {
+// using I_MOVZX_R64_BYTE_PTR_R64_T         = Instruction<0x06, uint8_t, uint8_t>;
+// using I_MOVZX_R64_WORD_PTR_R64_T         = Instruction<0x07, uint8_t, uint8_t>;
+// using I_MOVZX_R64_DWORD_PTR_R64_T        = Instruction<0x08, uint8_t, uint8_t>;
+// using I_MOVZX_R64_QWORD_PTR_R64_T        = Instruction<0x09, uint8_t, uint8_t>;
+// using I_MOVZX_R64_BYTE_PTR_I64_T         = Instruction<0x0E, uint8_t, uint64_t>;
+// using I_MOVZX_R64_WORD_PTR_I64_T         = Instruction<0x0F, uint8_t, uint64_t>;
+// using I_MOVZX_R64_DWORD_PTR_I64_T        = Instruction<0x10, uint8_t, uint64_t>;
+// using I_MOVZX_R64_QWORD_PTR_I64_T        = Instruction<0x11, uint8_t, uint64_t>;   
+        }
+        else if ("movsx"==ins)
+        {
+// using I_MOVSX_R64_BYTE_PTR_R64_T         = Instruction<0x0A, uint8_t, uint8_t>;
+// using I_MOVSX_R64_WORD_PTR_R64_T         = Instruction<0x0B, uint8_t, uint8_t>;
+// using I_MOVSX_R64_DWORD_PTR_R64_T        = Instruction<0x0C, uint8_t, uint8_t>;
+// using I_MOVSX_R64_QWORD_PTR_R64_T        = Instruction<0x0D, uint8_t, uint8_t>;
+// using I_MOVSX_R64_BYTE_PTR_I64_T         = Instruction<0x12, uint8_t, uint64_t>;
+// using I_MOVSX_R64_WORD_PTR_I64_T         = Instruction<0x13, uint8_t, uint64_t>;
+// using I_MOVSX_R64_DWORD_PTR_I64_T        = Instruction<0x14, uint8_t, uint64_t>;
+// using I_MOVSX_R64_QWORD_PTR_I64_T        = Instruction<0x15, uint8_t, uint64_t>;
+        }
+        else if ("add"==ins) {}
+        else if ("sub"==ins) {}
+        else if ("mul"==ins) {}
+        else if ("div"==ins) {}
+        else if ("sar"==ins) {}
+        else if ("shr"==ins) {}
+        else if ("shl"==ins) {}
+        else if ("and"==ins) {}
+        else if ("or"==ins) {}
+        else if ("xor"==ins) {}
+        else if ("not"==ins) {}
+        else if ("cmp"==ins) {}
+        else if ("je"==ins) {}
+        else if ("jg"==ins) {}
+        else if ("jge"==ins) {}
+        else if ("jl"==ins) {}
+        else if ("jle"==ins) {}
+        else if ("ja"==ins) {}
+        else if ("jae"==ins) {}
+        else if ("jb"==ins) {}
+        else if ("jbe"==ins) {}
+        else if ("call"==ins) {}
+        else if ("ret"==ins) {}
+        else if ("push"==ins) {}
+        else if ("pop"==ins) {}
+        else if ("syscall"==ins) {}
+    }
+// struct UnresolvedAddress
+// {
+//     enum class AdddressType {Absolute, Relative};
+//     AdddressType addresstype;
+//     size_t pc;
+//     size_t offset;
+//     std::string symbol;
+//     size_t number;
+// };
+    void fillUnresolved()
+    {
+        for (const auto& i : mUnresolvedAddress)
+        {
+            auto found = mSymbolTable.find(i.symbol);
+            if (mSymbolTable.end() == found)
+                throw std::runtime_error(std::string{} + "Unreference symbol: " + i.symbol + " at line: " + std::to_string(i.number));
+
+            if (UnresolvedAddress::AdddressType::Absolute == i.addresstype)
+            {
+                new (mByteCode.data()+i.pc+i.offset) size_t(found->second.address);
+            }
+            // TODO: resolve relative
+        }
+    }
     std::vector<std::string> mKeywordData = {"ascii", "byte", "word", "dword", "qword"};
     std::vector<uint8_t> mByteCode;
     std::map<std::string, SymbolInfo> mSymbolTable;
