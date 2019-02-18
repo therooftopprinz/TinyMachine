@@ -12,7 +12,6 @@ using namespace ::testing;
 std::string hexify(uint8_t *pData, size_t pCount)
 {
     std::stringstream ss;
-    ss << "hexify: ";
     for (size_t i=0; i<pCount; i++)
         ss << std::setw(2) << std::setfill('0') << std::hex << unsigned(pData[i]);
     return ss.str();
@@ -83,12 +82,10 @@ TEST_F(AssemblerTest, should_generateInstruction_mov)
                 mov a, 65535
                 mov a, 4294967295
                 mov a, -1
-
                 mov byte ptr[c], b
                 mov word ptr[c], b
                 mov dword ptr[c], b
                 mov qword ptr[c], b
-
                 mov byte ptr[after_main], b
                 mov word ptr[after_main], b
                 mov dword ptr[after_main], b
@@ -99,21 +96,25 @@ TEST_F(AssemblerTest, should_generateInstruction_mov)
             after_main:
         )";
     Assembler m(src);
-    std::cout << hexify(m.getByteCode().data(), m.getByteCode().size()) << "\n";
+    EXPECT_EQ(hexify(m.getByteCode().data(), m.getByteCode().size()),
+        "010001"                //  mov a, b
+        "0200ff"                //  mov a, 255
+        "0300ffff"              //  mov a, 65535
+        "0400ffffffff"          //  mov a, 4294967295
+        "0500ffffffffffffffff"  //  mov a, -1
+        "160201"                //  mov byte ptr[c], b
+        "170201"                //  mov word ptr[c], b
+        "180201"                //  mov dword ptr[c], b
+        "190201"                //  mov qword ptr[c], b
+        "1a6c0000000000000001"  //  mov byte ptr[after_main], b
+        "1b6c0000000000000001"  //  mov word ptr[after_main], b
+        "1c6c0000000000000001"  //  mov dword ptr[after_main], b
+        "1d6c0000000000000001"  //  mov qword ptr[after_main], b
+        "1a000000000000000001"  //  mov byte ptr[main], b
+        "1affffffffffffffff01"  //  mov byte ptr[-1], b
+        "1afeffffffffffffff01"  //  mov byte ptr[-2], b
+    );
 }
-
-// 06XXYY               - MOVZX    REG64, BYTE PTR [REG64]
-// 07XXYY               - MOVZX    REG64, WORD PTR [REG64]
-// 08XXYY               - MOVZX    REG64, DWORD PTR[REG64]
-// 09XXYY               - MOVZX    REG64, QWORD PTR[REG64]
-// 0EXXYYYYYYYYYYYYYYYY - MOVZX    REG64, BYTE PTR [IMM64]
-// 0FXXYYYYYYYYYYYYYYYY - MOVZX    REG64, WORD PTR [IMM64]
-// 10XXYYYYYYYYYYYYYYYY - MOVZX    REG64, DWORD PTR[IMM64]
-// 11XXYYYYYYYYYYYYYYYY - MOVZX    REG64, QWORD PTR[IMM64]
-// 0EXXYYYYYYYYYYYYYYYY - MOVZX    REG64, BYTE PTR [IMM64]
-// 0FXXYYYYYYYYYYYYYYYY - MOVZX    REG64, WORD PTR [IMM64]
-// 10XXYYYYYYYYYYYYYYYY - MOVZX    REG64, DWORD PTR[IMM64]
-// 11XXYYYYYYYYYYYYYYYY - MOVZX    REG64, QWORD PTR[IMM64]
 
 TEST_F(AssemblerTest, should_generateInstruction_movzx)
 {
@@ -134,7 +135,20 @@ TEST_F(AssemblerTest, should_generateInstruction_movzx)
             after_main:
         )";
     Assembler m(src);
-    std::cout << m.getByteCode().size() << " = " << hexify(m.getByteCode().data(), m.getByteCode().size()) << "\n";
+    EXPECT_EQ(hexify(m.getByteCode().data(), m.getByteCode().size()),
+        "060102"                //  movzx b, byte ptr [c]
+        "070102"                //  movzx b, word ptr [c]
+        "080102"                //  movzx b, dword ptr[c]
+        "090102"                //  movzx b, qword ptr[c]
+        "0e010100000000000000"  //  movzx b, byte ptr [1]
+        "0f010200000000000000"  //  movzx b, word ptr [2]
+        "10010300000000000000"  //  movzx b, dword ptr[3]
+        "11010400000000000000"  //  movzx b, qword ptr[4]
+        "0e015c00000000000000"  //  movzx b, byte ptr [after_main]
+        "0f015c00000000000000"  //  movzx b, word ptr [after_main]
+        "10015c00000000000000"  //  movzx b, dword ptr[after_main]
+        "11015c00000000000000"  //  movzx b, qword ptr[after_main]
+    );
 }
 
 TEST_F(AssemblerTest, should_generateInstruction_movsx)
@@ -156,5 +170,18 @@ TEST_F(AssemblerTest, should_generateInstruction_movsx)
             after_main:
         )";
     Assembler m(src);
-    std::cout << m.getByteCode().size() << " = " << hexify(m.getByteCode().data(), m.getByteCode().size()) << "\n";
+    EXPECT_EQ(hexify(m.getByteCode().data(), m.getByteCode().size()),
+        "0a0102"                //  movsx b, byte ptr [c]
+        "0b0102"                //  movsx b, word ptr [c]
+        "0c0102"                //  movsx b, dword ptr[c]
+        "0d0102"                //  movsx b, qword ptr[c]
+        "12010100000000000000"  //  movsx b, byte ptr [1]
+        "13010200000000000000"  //  movsx b, word ptr [2]
+        "14010300000000000000"  //  movsx b, dword ptr[3]
+        "15010400000000000000"  //  movsx b, qword ptr[4]
+        "12015c00000000000000"  //  movsx b, byte ptr [after_main]
+        "13015c00000000000000"  //  movsx b, word ptr [after_main]
+        "14015c00000000000000"  //  movsx b, dword ptr[after_main]
+        "15015c00000000000000"  //  movsx b, qword ptr[after_main]
+    );
 }

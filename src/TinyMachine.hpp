@@ -2,6 +2,7 @@
 #define __TINYMACHINE_MACHINE_HPP__
 
 #include <string_view>
+#include <type_traits>
 #include <algorithm>
 #include <cstring>
 #include <string>
@@ -283,7 +284,7 @@ private:
         auto it = mSymbolTable.find(pLabel);
         if (mSymbolTable.end()!=it)
             throw std::runtime_error(std::string{} + "Label is existing: " + pLabel + " first defined in line number: " + std::to_string(it->second.number));
-        std::cout << "label: " << pLabel << "\n";
+        // std::cout << "label: " << pLabel << "\n";
         mSymbolTable.emplace(std::pair<std::string, SymbolInfo>(pLabel, {mByteCode.size(), pNumber}));
     }
 
@@ -298,7 +299,7 @@ private:
                 throw std::runtime_error(std::string{} + "Ascii data failed: in line number: " + std::to_string(pNumber));
 
             auto ascii = match[1].str();
-            std::cout << "ascii: " << ascii << "\n";
+            // std::cout << "ascii: " << ascii << "\n";
             auto base = mByteCode.size();
             mByteCode.resize(base+ascii.size()+1);
             std::memcpy(mByteCode.data()+base, ascii.data(), ascii.size());
@@ -436,9 +437,9 @@ private:
         if (b.size())
             bt = getOperandType(b);
 
-        std::cout << "ins: " << ins << "\n";
-        std::cout << "a: " << a << "\n";
-        std::cout << "b: " << b << "\n";
+        // std::cout << "ins: " << ins << "\n";
+        // std::cout << "a: " << a << "\n";
+        // std::cout << "b: " << b << "\n";
         if ("mov"==ins)
         {
             if (OperandType::R64==at && OperandType::R64==bt)
@@ -524,13 +525,13 @@ private:
             if (OperandType::R64==at && OperandType::QPI64==bt)
                 return encodeMov8_S<I_MOVZX_R64_QWORD_PTR_I64_T>(a, ptrval);
 
-            if (OperandType::R64==at && OperandType::BPI64==bt)
+            if (OperandType::R64==at && OperandType::BPIN64==bt)
                 return encodeMov8_SN<I_MOVZX_R64_BYTE_PTR_I64_T>(pNumber, a, ptrval);
-            if (OperandType::R64==at && OperandType::WPI64==bt)
+            if (OperandType::R64==at && OperandType::WPIN64==bt)
                 return encodeMov8_SN<I_MOVZX_R64_WORD_PTR_I64_T>(pNumber, a, ptrval);
-            if (OperandType::R64==at && OperandType::DPI64==bt)
+            if (OperandType::R64==at && OperandType::DPIN64==bt)
                 return encodeMov8_SN<I_MOVZX_R64_DWORD_PTR_I64_T>(pNumber, a, ptrval);
-            if (OperandType::R64==at && OperandType::QPI64==bt)
+            if (OperandType::R64==at && OperandType::QPIN64==bt)
                 return encodeMov8_SN<I_MOVZX_R64_QWORD_PTR_I64_T>(pNumber, a, ptrval);
         }
         else if ("movsx"==ins)
@@ -785,6 +786,38 @@ public:
         }
     }
 private:
+
+    template <typename T>
+    void doMovR8_Ix(const uint8_t* pIns)
+    {
+        T i(pIns);
+        i.decode();
+        auto b = i.template get<1>();
+        mRegisters[i.template get<0>()] = ssize_t(std::make_signed_t<decltype(b)>(b));
+        mProgramCounter += T::size();
+        break;
+    }
+
+    template <typename T, typename X>
+    void doMovzxR64_xPtrR64(const uint8_t* pIns)
+    {
+        T i(pIns);
+        X b;
+        std::memcpy(&b, mByteCode.data() + mRegisters[i.template get<1>()], sizeof(X));
+        &mRegisters[i.template get<0>()] = b;
+        mProgramCounter += T::size();
+    }
+
+    template <typename T, typename X>
+    void doMovsxR64_xPtrR64(const uint8_t* pIns)
+    {
+        T i(pIns);
+        X b;
+        std::memcpy(&b, mByteCode.data() + mRegisters[i.template get<1>()], sizeof(X));
+        &mRegisters[i.template get<0>()] = b;
+        mProgramCounter += T::size();
+    }
+
     void process(uint8_t* pIns)
     {
         auto opCode = *pIns;
@@ -792,386 +825,466 @@ private:
         {
             case I_MOV_R64_R64_T::opcode:
             {
+                I_MOV_R64_R64_T i(pIns);
+                i.decode();
+                mRegisters[i.get<0>()] = mRegisters[i.get<1>()]
+                mProgramCounter += I_MOV_R64_R64_T::size();
                 break;
             }
 
             case I_MOV_R64_I8_T::opcode:
             {
+                doMovR8_Ix<I_MOV_R64_I8_T>(pIns);
                 break;
             }
 
             case I_MOV_R64_I16_T::opcode:
             {
+                doMovR8_Ix<I_MOV_R64_I16_T>(pIns);
                 break;
             }
 
             case I_MOV_R64_I32_T::opcode:
             {
+                doMovR8_Ix<I_MOV_R64_I32_T>(pIns);
                 break;
             }
 
             case I_MOV_R64_I64_T::opcode:
             {
+                doMovR8_Ix<I_MOV_R64_I64_T>(pIns);
                 break;
             }
 
             case I_MOVZX_R64_BYTE_PTR_R64_T::opcode:
             {
+                doMovzxR64_xPtrR64<I_MOVZX_R64_BYTE_PTR_R64_T, uint8_t>(pIns);
                 break;
             }
 
             case I_MOVZX_R64_WORD_PTR_R64_T::opcode:
             {
+                doMovzxR64_xPtrR64<I_MOVZX_R64_WORD_PTR_R64_T, uint16_t>(pIns);
                 break;
             }
 
             case I_MOVZX_R64_DWORD_PTR_R64_T::opcode:
             {
+                doMovzxR64_xPtrR64<I_MOVZX_R64_DWORD_PTR_R64_T, uint32_t>(pIns);
                 break;
             }
 
             case I_MOVZX_R64_QWORD_PTR_R64_T::opcode:
             {
+                doMovzxR64_xPtrR64<I_MOVZX_R64_QWORD_PTR_R64_T, uint64_t>(pIns);
                 break;
             }
 
             case I_MOVSX_R64_BYTE_PTR_R64_T::opcode:
             {
+                I_MOVSX_R64_BYTE_PTR_R64_T i(pIns);
                 break;
             }
 
             case I_MOVSX_R64_WORD_PTR_R64_T::opcode:
             {
+                I_MOVSX_R64_WORD_PTR_R64_T i(pIns);
                 break;
             }
 
             case I_MOVSX_R64_DWORD_PTR_R64_T::opcode:
             {
+                I_MOVSX_R64_DWORD_PTR_R64_T i(pIns);
                 break;
             }
 
             case I_MOVSX_R64_QWORD_PTR_R64_T::opcode:
             {
+                I_MOVSX_R64_QWORD_PTR_R64_T i(pIns);
                 break;
             }
 
             case I_MOVZX_R64_BYTE_PTR_I64_T::opcode:
             {
+                I_MOVZX_R64_BYTE_PTR_I64_T i(pIns);
                 break;
             }
 
             case I_MOVZX_R64_WORD_PTR_I64_T::opcode:
             {
+                I_MOVZX_R64_WORD_PTR_I64_T i(pIns);
                 break;
             }
 
             case I_MOVZX_R64_DWORD_PTR_I64_T::opcode:
             {
+                I_MOVZX_R64_DWORD_PTR_I64_T i(pIns);
                 break;
             }
 
             case I_MOVZX_R64_QWORD_PTR_I64_T::opcode:
             {
+                I_MOVZX_R64_QWORD_PTR_I64_T i(pIns);
                 break;
             }
 
             case I_MOVSX_R64_BYTE_PTR_I64_T::opcode:
             {
+                I_MOVSX_R64_BYTE_PTR_I64_T i(pIns);
                 break;
             }
 
             case I_MOVSX_R64_WORD_PTR_I64_T::opcode:
             {
+                I_MOVSX_R64_WORD_PTR_I64_T i(pIns);
                 break;
             }
 
             case I_MOVSX_R64_DWORD_PTR_I64_T::opcode:
             {
+                I_MOVSX_R64_DWORD_PTR_I64_T i(pIns);
                 break;
             }
 
             case I_MOVSX_R64_QWORD_PTR_I64_T::opcode:
             {
+                I_MOVSX_R64_QWORD_PTR_I64_T i(pIns);
                 break;
             }
 
             case I_MOV_BYTE_PTR_R64_R64_T::opcode:
             {
+                I_MOV_BYTE_PTR_R64_R64_T i(pIns);
                 break;
             }
 
             case I_MOV_WORD_PTR_R64_R64_T::opcode:
             {
+                I_MOV_WORD_PTR_R64_R64_T i(pIns);
                 break;
             }
 
             case I_MOV_DWORD_PTR_R64_R64_T::opcode:
             {
+                I_MOV_DWORD_PTR_R64_R64_T i(pIns);
                 break;
             }
 
             case I_MOV_QWORD_PTR_R64_R64_T::opcode:
             {
+                I_MOV_QWORD_PTR_R64_R64_T i(pIns);
                 break;
             }
 
             case I_MOV_BYTE_PTR_I64_R64_T::opcode:
             {
+                I_MOV_BYTE_PTR_I64_R64_T i(pIns);
                 break;
             }
 
             case I_MOV_WORD_PTR_I64_R64_T::opcode:
             {
+                I_MOV_WORD_PTR_I64_R64_T i(pIns);
                 break;
             }
 
             case I_MOV_DWORD_PTR_I64_R64_T::opcode:
             {
+                I_MOV_DWORD_PTR_I64_R64_T i(pIns);
                 break;
             }
 
             case I_MOV_QWORD_PTR_I64_R64_T::opcode:
             {
+                I_MOV_QWORD_PTR_I64_R64_T i(pIns);
                 break;
             }
 
             case I_ADD_R64_R64_T::opcode:
             {
+                I_ADD_R64_R64_T i(pIns);
                 break;
             }
 
             case I_SUB_R64_R64_T::opcode:
             {
+                I_SUB_R64_R64_T i(pIns);
                 break;
             }
 
             case I_MUL_R64_R64_T::opcode:
             {
+                I_MUL_R64_R64_T i(pIns);
                 break;
             }
 
             case I_DIV_R64_R64_T::opcode:
             {
+                I_DIV_R64_R64_T i(pIns);
                 break;
             }
 
             case I_ADD_R64_I64_T::opcode:
             {
+                I_ADD_R64_I64_T i(pIns);
                 break;
             }
 
             case I_SUB_R64_I64_T::opcode:
             {
+                I_SUB_R64_I64_T i(pIns);
                 break;
             }
 
             case I_MUL_R64_I64_T::opcode:
             {
+                I_MUL_R64_I64_T i(pIns);
                 break;
             }
 
             case I_DIV_R64_I64_T::opcode:
             {
+                I_DIV_R64_I64_T i(pIns);
                 break;
             }
 
             case I_SAR_R64_R64_T::opcode:
             {
+                I_SAR_R64_R64_T i(pIns);
                 break;
             }
 
             case I_SHR_R64_R64_T::opcode:
             {
+                I_SHR_R64_R64_T i(pIns);
                 break;
             }
 
             case I_SHL_R64_R64_T::opcode:
             {
+                I_SHL_R64_R64_T i(pIns);
                 break;
             }
 
             case I_SAR_R64_I8_T::opcode:
             {
+                I_SAR_R64_I8_T i(pIns);
                 break;
             }
 
             case I_SHR_R64_I8_T::opcode:
             {
+                I_SHR_R64_I8_T i(pIns);
                 break;
             }
 
             case I_SHL_R64_I8_T::opcode:
             {
+                I_SHL_R64_I8_T i(pIns);
                 break;
             }
 
             case I_AND_R64_R64_T::opcode:
             {
+                I_AND_R64_R64_T i(pIns);
                 break;
             }
 
             case I_OR_R64_R64_T::opcode:
             {
+                I_OR_R64_R64_T i(pIns);
                 break;
             }
 
             case I_XOR_R64_R64_T::opcode:
             {
+                I_XOR_R64_R64_T i(pIns);
                 break;
             }
 
             case I_NOT_R64_R64_T::opcode:
             {
+                I_NOT_R64_R64_T i(pIns);
                 break;
             }
 
             case I_CMP_R64_R64_T::opcode:
             {
+                I_CMP_R64_R64_T i(pIns);
                 break;
             }
 
             case I_AND_R64_I64_T::opcode:
             {
+                I_AND_R64_I64_T i(pIns);
                 break;
             }
 
             case I_OR_R64_I64_T::opcode:
             {
+                I_OR_R64_I64_T i(pIns);
                 break;
             }
 
             case I_XOR_R64_I64_T::opcode:
             {
+                I_XOR_R64_I64_T i(pIns);
                 break;
             }
 
             case I_NOT_R64_I64_T::opcode:
             {
+                I_NOT_R64_I64_T i(pIns);
                 break;
             }
 
             case I_CMP_R64_I64_T::opcode:
             {
+                I_CMP_R64_I64_T i(pIns);
                 break;
             }
 
             case I_JE_R64_T::opcode:
             {
+                I_JE_R64_T i(pIns);
                 break;
             }
 
             case I_JG_R64_T::opcode:
             {
+                I_JG_R64_T i(pIns);
                 break;
             }
 
             case I_JGE_R64_T::opcode:
             {
+                I_JGE_R64_T i(pIns);
                 break;
             }
 
             case I_JL_R64_T::opcode:
             {
+                I_JL_R64_T i(pIns);
                 break;
             }
 
             case I_JLE_R64_T::opcode:
             {
+                I_JLE_R64_T i(pIns);
                 break;
             }
 
             case I_JA_R64_T::opcode:
             {
+                I_JA_R64_T i(pIns);
                 break;
             }
 
             case I_JAE_R64_T::opcode:
             {
+                I_JAE_R64_T i(pIns);
                 break;
             }
 
             case I_JB_R64_T::opcode:
             {
+                I_JB_R64_T i(pIns);
                 break;
             }
 
             case I_JBE_R64_T::opcode:
             {
+                I_JBE_R64_T i(pIns);
                 break;
             }
 
             case I_CALL_R64_T::opcode:
             {
+                I_CALL_R64_T i(pIns);
                 break;
             }
 
             case I_JE_I64_T::opcode:
             {
+                I_JE_I64_T i(pIns);
                 break;
             }
 
             case I_JG_I64_T::opcode:
             {
+                I_JG_I64_T i(pIns);
                 break;
             }
 
             case I_JGE_I64_T::opcode:
             {
+                I_JGE_I64_T i(pIns);
                 break;
             }
 
             case I_JL_I64_T::opcode:
             {
+                I_JL_I64_T i(pIns);
                 break;
             }
 
             case I_JLE_I64_T::opcode:
             {
+                I_JLE_I64_T i(pIns);
                 break;
             }
 
             case I_JA_I64_T::opcode:
             {
+                I_JA_I64_T i(pIns);
                 break;
             }
 
             case I_JAE_I64_T::opcode:
             {
+                I_JAE_I64_T i(pIns);
                 break;
             }
 
             case I_JB_I64_T::opcode:
             {
+                I_JB_I64_T i(pIns);
                 break;
             }
 
             case I_JBE_I64_T::opcode:
             {
+                I_JBE_I64_T i(pIns);
                 break;
             }
 
             case I_CALL_I64_T::opcode:
             {
+                I_CALL_I64_T i(pIns);
                 break;
             }
 
             case I_RET_T::opcode:
             {
+                I_RET_T i(pIns);
                 break;
             }
 
             case I_PUSH_R64_T::opcode:
             {
+                I_PUSH_R64_T i(pIns);
                 break;
             }
 
             case I_POP_R64_T::opcode:
             {
+                I_POP_R64_T i(pIns);
                 break;
             }
 
             case I_SYSCALL_T::opcode:
             {
+                I_SYSCALL_T i(pIns);
                 break;
             }
 

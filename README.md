@@ -2,13 +2,13 @@
 
 ## Registers
 * A-Z - 64-bit Registers
-  * A-E : General Purpose Register, Integer
-  * F : Flag Register
-  * G-O : General Purpose Register, Integer
-  * P : Program Counter, Integer
-  * Q-R : Special Counter, Integer
-  * S : Stack Pointer, Integer
-  * T-Z : Floating Register
+* A-E : General Purpose Register, Integer
+* F : Flag Register
+* G-O : General Purpose Register, Integer
+* P : Program Counter, Integer
+* Q-R : Special Counter, Integer
+* S : Stack Pointer, Integer
+* T-Z : Floating Register
 
 ## Instruction
 ```
