@@ -814,7 +814,7 @@ private:
         T i(pIns);
         X b;
         std::memcpy(&b, mByteCode.data() + mRegisters[i.template get<1>()], sizeof(X));
-        &mRegisters[i.template get<0>()] = b;
+        &mRegisters[i.template get<0>()] = ssize_t(b);
         mProgramCounter += T::size();
     }
 
@@ -882,25 +882,26 @@ private:
 
             case I_MOVSX_R64_BYTE_PTR_R64_T::opcode:
             {
-                I_MOVSX_R64_BYTE_PTR_R64_T i(pIns);
+                doMovsxR64_xPtrR64<I_MOVSX_R64_BYTE_PTR_R64_T, int8_t>(pIns);
                 break;
             }
 
             case I_MOVSX_R64_WORD_PTR_R64_T::opcode:
             {
-                I_MOVSX_R64_WORD_PTR_R64_T i(pIns);
+                doMovsxR64_xPtrR64<I_MOVSX_R64_WORD_PTR_R64_T, int16_t>(pIns);
                 break;
             }
 
             case I_MOVSX_R64_DWORD_PTR_R64_T::opcode:
             {
-                I_MOVSX_R64_DWORD_PTR_R64_T i(pIns);
+                doMovsxR64_xPtrR64<I_MOVSX_R64_DWORD_PTR_R64_T, int32_t>(pIns);
                 break;
             }
 
             case I_MOVSX_R64_QWORD_PTR_R64_T::opcode:
             {
                 I_MOVSX_R64_QWORD_PTR_R64_T i(pIns);
+                doMovsxR64_xPtrR64<I_MOVSX_R64_QWORD_PTR_R64_T, int64_t>(pIns);
                 break;
             }
 
