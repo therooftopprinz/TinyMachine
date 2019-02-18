@@ -17,7 +17,7 @@ template<size_t N, bool IsDecode, typename Operands, typename... Ts>
 struct Codec
 {
     Codec(uint8_t* pPC, Operands& pOperands){}
-};        
+};
 
 template<size_t N, bool IsDecode, typename Operands, typename T, typename... Ts>
 struct Codec<N, IsDecode, Operands, T, Ts...> : Codec<N+1, IsDecode, Operands, Ts...>
@@ -49,7 +49,10 @@ public:
 
     constexpr static size_t size()
     {
-        return sizeof(opcode) + (sizeof(Operands)+...);
+        if constexpr (sizeof...(Operands))
+            return sizeof(opcode) + (sizeof(Operands)+...);
+        else
+            return sizeof(opcode);
     }
 
     uint8_t* next()
@@ -158,8 +161,6 @@ using I_SYSCALL_T                        = Instruction<0x50>;
 
 struct UnresolvedAddress
 {
-    enum class AdddressType {Absolute, Relative};
-    AdddressType addresstype;
     size_t pc;
     size_t offset;
     std::string symbol;
@@ -206,7 +207,7 @@ public:
             auto regtype = getRegType(ptrval);
             auto ptrsize = match[1].str();
             if (OperandType::R64 == regtype)
-            {   
+            {
                 if ("byte" == ptrsize) return OperandType::BPR64;
                 else if ("word" == ptrsize) return OperandType::WPR64;
                 else if ("dword" == ptrsize) return OperandType::DPR64;
@@ -264,7 +265,7 @@ private:
        }
        return tokens;
     }
- 
+
     void parse(size_t pNumber, std::string pLine)
     {
         auto tokens = split(pLine, ' ');
@@ -308,6 +309,16 @@ private:
         throw std::runtime_error(std::string{} + "Unimplemented data keyword! line: " + pLine);
     }
 
+    std::string getPtrValue(const std::string& pPtr)
+    {
+        std::regex pattern("^(.*?)[ ]+ptr[ ]*\\[(.*?)\\]$");
+        std::smatch match;
+        std::string ptrval;
+        if (std::regex_match(pPtr, match, pattern))
+            ptrval = match[2].str();
+        return ptrval;
+    }
+
     template <typename T>
     void encodeMov8_8(const std::string& a, const std::string& b)
     {
@@ -328,9 +339,22 @@ private:
         i.template get<0>() = a.back()-'a';
         i.template get<1>() = std::stoul(b);
         i.encode();
-        return;
     }
-    
+
+    template <typename T>
+    void encodeMov8_SN(size_t pNumber, const std::string& a, const std::string& b)
+    {
+        auto found = mSymbolTable.find(b);
+        if (mSymbolTable.end()!=found)
+            return encodeMov8_S<T>(a, std::to_string(found->second.address));
+        auto basesize = mByteCode.size();
+        mUnresolvedAddress.emplace_back(UnresolvedAddress{basesize, sizeof(T::opcode) +
+            1, b, pNumber});
+            // TODO: reform to this:
+            // sizeof(decltype(T().template get<0>())), b, pNumber});
+        return encodeMov8_S<T>(a, "0");
+    }
+
     template <typename T>
     void encodeMov64_8(const std::string& a, const std::string& b)
     {
@@ -340,7 +364,6 @@ private:
         i.template get<0>() = size_t(std::stoul(a));
         i.template get<1>() = b.back()-'a';
         i.encode();
-        return;
     }
 
     template <typename T>
@@ -350,8 +373,48 @@ private:
         if (mSymbolTable.end()!=found)
             return encodeMov64_8<T>(std::to_string(found->second.address), b);
         auto basesize = mByteCode.size();
-        mUnresolvedAddress.emplace_back(UnresolvedAddress{UnresolvedAddress::AdddressType::Absolute, basesize, sizeof(T::opcode), a, pNumber});
+        mUnresolvedAddress.emplace_back(UnresolvedAddress{basesize, sizeof(T::opcode), a, pNumber});
         return encodeMov64_8<T>("0", b);
+    }
+
+    template <typename T>
+    void encodeIns8(const std::string& a)
+    {
+        auto basesize = mByteCode.size();
+        mByteCode.resize(basesize + T::size());
+        T i(mByteCode.data()+basesize);
+        i.template get<0>() = a.back()-'a';
+        i.encode();
+    }
+
+    template <typename T>
+    void encodeInsS(const std::string& a)
+    {
+        auto basesize = mByteCode.size();
+        mByteCode.resize(basesize + T::size());
+        T i(mByteCode.data()+basesize);
+        i.template get<0>() = std::stoul(a);
+        i.encode();
+    }
+
+    template <typename T>
+    void encodeInsSN(size_t pNumber, const std::string& a)
+    {
+        auto found = mSymbolTable.find(a);
+        if (mSymbolTable.end()!=found)
+            return encodeInsS<T>(std::to_string(found->second.address));
+        auto basesize = mByteCode.size();
+        mUnresolvedAddress.emplace_back(UnresolvedAddress{basesize, sizeof(T::opcode), a, pNumber});
+        return encodeInsS<T>("0");
+    }
+
+    template <typename T>
+    void encodeIns()
+    {
+        auto basesize = mByteCode.size();
+        mByteCode.resize(basesize + T::size());
+        T i(mByteCode.data()+basesize);
+        i.encode();
     }
 
     void instruction(size_t pNumber, std::string& pLine)
@@ -368,9 +431,9 @@ private:
         OperandType at = {};
         OperandType bt = {};
 
-        if (a.size()) 
+        if (a.size())
             at = getOperandType(a);
-        if (b.size()) 
+        if (b.size())
             bt = getOperandType(b);
 
         std::cout << "ins: " << ins << "\n";
@@ -400,7 +463,7 @@ private:
                 if (mSymbolTable.end()==found)
                 {
                     i.get<1>() = 0;
-                    mUnresolvedAddress.emplace_back(UnresolvedAddress{UnresolvedAddress::AdddressType::Absolute, basesize, sizeof(I_MOV_R64_I64_T::opcode)+1, b, pNumber});
+                    mUnresolvedAddress.emplace_back(UnresolvedAddress{basesize, sizeof(I_MOV_R64_I64_T::opcode)+1, b, pNumber});
                 }
                 else
                 {
@@ -410,12 +473,8 @@ private:
                 return;
             }
 
-            // TODO: reuse from getOperandType 
-            std::regex pattern("^(.*?)[ ]+ptr[ ]*\\[(.*?)\\]$");
-            std::smatch match;
-            std::string ptrval;
-            if (std::regex_match(a, match, pattern))
-                ptrval = match[2].str();
+            // TODO: reuse from getOperandType
+            auto ptrval = getPtrValue(a);
 
             if (OperandType::BPR64==at && OperandType::R64==bt)
                 return encodeMov8_8<I_MOV_BYTE_PTR_R64_R64_T>(ptrval, b);
@@ -446,62 +505,253 @@ private:
         }
         else if ("movzx"==ins)
         {
-// using I_MOVZX_R64_BYTE_PTR_R64_T         = Instruction<0x06, uint8_t, uint8_t>;
-// using I_MOVZX_R64_WORD_PTR_R64_T         = Instruction<0x07, uint8_t, uint8_t>;
-// using I_MOVZX_R64_DWORD_PTR_R64_T        = Instruction<0x08, uint8_t, uint8_t>;
-// using I_MOVZX_R64_QWORD_PTR_R64_T        = Instruction<0x09, uint8_t, uint8_t>;
-// using I_MOVZX_R64_BYTE_PTR_I64_T         = Instruction<0x0E, uint8_t, uint64_t>;
-// using I_MOVZX_R64_WORD_PTR_I64_T         = Instruction<0x0F, uint8_t, uint64_t>;
-// using I_MOVZX_R64_DWORD_PTR_I64_T        = Instruction<0x10, uint8_t, uint64_t>;
-// using I_MOVZX_R64_QWORD_PTR_I64_T        = Instruction<0x11, uint8_t, uint64_t>;   
+            auto ptrval = getPtrValue(b);
+            if (OperandType::R64==at && OperandType::BPR64==bt)
+                return encodeMov8_8<I_MOVZX_R64_BYTE_PTR_R64_T>(a, ptrval);
+            if (OperandType::R64==at && OperandType::WPR64==bt)
+                return encodeMov8_8<I_MOVZX_R64_WORD_PTR_R64_T>(a, ptrval);
+            if (OperandType::R64==at && OperandType::DPR64==bt)
+                return encodeMov8_8<I_MOVZX_R64_DWORD_PTR_R64_T>(a, ptrval);
+            if (OperandType::R64==at && OperandType::QPR64==bt)
+                return encodeMov8_8<I_MOVZX_R64_QWORD_PTR_R64_T>(a, ptrval);
+
+            if (OperandType::R64==at && OperandType::BPI64==bt)
+                return encodeMov8_S<I_MOVZX_R64_BYTE_PTR_I64_T>(a, ptrval);
+            if (OperandType::R64==at && OperandType::WPI64==bt)
+                return encodeMov8_S<I_MOVZX_R64_WORD_PTR_I64_T>(a, ptrval);
+            if (OperandType::R64==at && OperandType::DPI64==bt)
+                return encodeMov8_S<I_MOVZX_R64_DWORD_PTR_I64_T>(a, ptrval);
+            if (OperandType::R64==at && OperandType::QPI64==bt)
+                return encodeMov8_S<I_MOVZX_R64_QWORD_PTR_I64_T>(a, ptrval);
+
+            if (OperandType::R64==at && OperandType::BPI64==bt)
+                return encodeMov8_SN<I_MOVZX_R64_BYTE_PTR_I64_T>(pNumber, a, ptrval);
+            if (OperandType::R64==at && OperandType::WPI64==bt)
+                return encodeMov8_SN<I_MOVZX_R64_WORD_PTR_I64_T>(pNumber, a, ptrval);
+            if (OperandType::R64==at && OperandType::DPI64==bt)
+                return encodeMov8_SN<I_MOVZX_R64_DWORD_PTR_I64_T>(pNumber, a, ptrval);
+            if (OperandType::R64==at && OperandType::QPI64==bt)
+                return encodeMov8_SN<I_MOVZX_R64_QWORD_PTR_I64_T>(pNumber, a, ptrval);
         }
         else if ("movsx"==ins)
         {
-// using I_MOVSX_R64_BYTE_PTR_R64_T         = Instruction<0x0A, uint8_t, uint8_t>;
-// using I_MOVSX_R64_WORD_PTR_R64_T         = Instruction<0x0B, uint8_t, uint8_t>;
-// using I_MOVSX_R64_DWORD_PTR_R64_T        = Instruction<0x0C, uint8_t, uint8_t>;
-// using I_MOVSX_R64_QWORD_PTR_R64_T        = Instruction<0x0D, uint8_t, uint8_t>;
-// using I_MOVSX_R64_BYTE_PTR_I64_T         = Instruction<0x12, uint8_t, uint64_t>;
-// using I_MOVSX_R64_WORD_PTR_I64_T         = Instruction<0x13, uint8_t, uint64_t>;
-// using I_MOVSX_R64_DWORD_PTR_I64_T        = Instruction<0x14, uint8_t, uint64_t>;
-// using I_MOVSX_R64_QWORD_PTR_I64_T        = Instruction<0x15, uint8_t, uint64_t>;
+            auto ptrval = getPtrValue(b);
+            if (OperandType::R64==at && OperandType::BPR64==bt)
+                return encodeMov8_8<I_MOVSX_R64_BYTE_PTR_R64_T>(a, ptrval);
+            if (OperandType::R64==at && OperandType::WPR64==bt)
+                return encodeMov8_8<I_MOVSX_R64_WORD_PTR_R64_T>(a, ptrval);
+            if (OperandType::R64==at && OperandType::DPR64==bt)
+                return encodeMov8_8<I_MOVSX_R64_DWORD_PTR_R64_T>(a, ptrval);
+            if (OperandType::R64==at && OperandType::QPR64==bt)
+                return encodeMov8_8<I_MOVSX_R64_QWORD_PTR_R64_T>(a, ptrval);
+
+            if (OperandType::R64==at && OperandType::BPI64==bt)
+                return encodeMov8_S<I_MOVSX_R64_BYTE_PTR_I64_T>(a, ptrval);
+            if (OperandType::R64==at && OperandType::WPI64==bt)
+                return encodeMov8_S<I_MOVSX_R64_WORD_PTR_I64_T>(a, ptrval);
+            if (OperandType::R64==at && OperandType::DPI64==bt)
+                return encodeMov8_S<I_MOVSX_R64_DWORD_PTR_I64_T>(a, ptrval);
+            if (OperandType::R64==at && OperandType::QPI64==bt)
+                return encodeMov8_S<I_MOVSX_R64_QWORD_PTR_I64_T>(a, ptrval);
+
+            if (OperandType::R64==at && OperandType::BPIN64==bt)
+                return encodeMov8_SN<I_MOVSX_R64_BYTE_PTR_I64_T>(pNumber, a, ptrval);
+            if (OperandType::R64==at && OperandType::WPIN64==bt)
+                return encodeMov8_SN<I_MOVSX_R64_WORD_PTR_I64_T>(pNumber, a, ptrval);
+            if (OperandType::R64==at && OperandType::DPIN64==bt)
+                return encodeMov8_SN<I_MOVSX_R64_DWORD_PTR_I64_T>(pNumber, a, ptrval);
+            if (OperandType::R64==at && OperandType::QPIN64==bt)
+                return encodeMov8_SN<I_MOVSX_R64_QWORD_PTR_I64_T>(pNumber, a, ptrval);
         }
-        else if ("add"==ins) {}
-        else if ("sub"==ins) {}
-        else if ("mul"==ins) {}
-        else if ("div"==ins) {}
-        else if ("sar"==ins) {}
-        else if ("shr"==ins) {}
-        else if ("shl"==ins) {}
-        else if ("and"==ins) {}
-        else if ("or"==ins) {}
-        else if ("xor"==ins) {}
-        else if ("not"==ins) {}
-        else if ("cmp"==ins) {}
-        else if ("je"==ins) {}
-        else if ("jg"==ins) {}
-        else if ("jge"==ins) {}
-        else if ("jl"==ins) {}
-        else if ("jle"==ins) {}
-        else if ("ja"==ins) {}
-        else if ("jae"==ins) {}
-        else if ("jb"==ins) {}
-        else if ("jbe"==ins) {}
-        else if ("call"==ins) {}
-        else if ("ret"==ins) {}
-        else if ("push"==ins) {}
-        else if ("pop"==ins) {}
-        else if ("syscall"==ins) {}
+        else if ("add"==ins)
+        {
+            if (OperandType::R64==at && OperandType::R64==bt)
+                return encodeMov8_8<I_ADD_R64_I64_T>(a, b);
+            if (OperandType::R64==at && (OperandType::I64==bt||OperandType::I32==bt||OperandType::I16==bt||OperandType::I8==bt))
+                return encodeMov8_S<I_ADD_R64_I64_T>(a, b);
+        }
+        else if ("sub"==ins)
+        {
+            if (OperandType::R64==at && OperandType::R64==bt)
+                return encodeMov8_8<I_SUB_R64_I64_T>(a, b);
+            if (OperandType::R64==at && (OperandType::I64==bt||OperandType::I32==bt||OperandType::I16==bt||OperandType::I8==bt))
+                return encodeMov8_S<I_SUB_R64_I64_T>(a, b);
+        }
+        else if ("mul"==ins)
+        {
+            if (OperandType::R64==at && OperandType::R64==bt)
+                return encodeMov8_8<I_MUL_R64_I64_T>(a, b);
+            if (OperandType::R64==at && (OperandType::I64==bt||OperandType::I32==bt||OperandType::I16==bt||OperandType::I8==bt))
+                return encodeMov8_S<I_MUL_R64_I64_T>(a, b);
+        }
+        else if ("div"==ins)
+        {
+            if (OperandType::R64==at && OperandType::R64==bt)
+                return encodeMov8_8<I_DIV_R64_I64_T>(a, b);
+            if (OperandType::R64==at && (OperandType::I64==bt||OperandType::I32==bt||OperandType::I16==bt||OperandType::I8==bt))
+                return encodeMov8_S<I_DIV_R64_I64_T>(a, b);
+        }
+        else if ("sar"==ins)
+        {
+            if (OperandType::R64==at && OperandType::I8==bt)
+                return encodeMov8_S<I_SAR_R64_R64_T>(a, b);
+        }
+        else if ("shr"==ins)
+        {
+            if (OperandType::R64==at && OperandType::I8==bt)
+                return encodeMov8_S<I_SHR_R64_R64_T>(a, b);
+        }
+        else if ("shl"==ins)
+        {
+            if (OperandType::R64==at && OperandType::I8==bt)
+                return encodeMov8_S<I_SHL_R64_R64_T>(a, b);
+        }
+        else if ("and"==ins)
+        {
+            if (OperandType::R64==at && OperandType::R64==bt)
+                return encodeMov8_8<I_AND_R64_R64_T>(a, b);
+            if (OperandType::R64==at && OperandType::I8==bt)
+                return encodeMov8_S<I_AND_R64_I64_T>(a, b);
+        }
+        else if ("or"==ins)
+        {
+            if (OperandType::R64==at && OperandType::R64==bt)
+                return encodeMov8_8<I_OR_R64_R64_T>(a, b);
+            if (OperandType::R64==at && OperandType::I8==bt)
+                return encodeMov8_S<I_OR_R64_I64_T>(a, b);
+        }
+        else if ("xor"==ins)
+        {
+            if (OperandType::R64==at && OperandType::R64==bt)
+                return encodeMov8_8<I_XOR_R64_R64_T>(a, b);
+            if (OperandType::R64==at && OperandType::I8==bt)
+                return encodeMov8_S<I_XOR_R64_I64_T>(a, b);
+        }
+        else if ("not"==ins)
+        {
+            if (OperandType::R64==at && OperandType::R64==bt)
+                return encodeMov8_8<I_NOT_R64_R64_T>(a, b);
+            if (OperandType::R64==at && OperandType::I8==bt)
+                return encodeMov8_S<I_NOT_R64_I64_T>(a, b);
+        }
+        else if ("cmp"==ins)
+        {
+            if (OperandType::R64==at && OperandType::R64==bt)
+                return encodeMov8_8<I_CMP_R64_R64_T>(a, b);
+            if (OperandType::R64==at && OperandType::I8==bt)
+                return encodeMov8_S<I_CMP_R64_I64_T>(a, b);
+        }
+        else if ("je"==ins)
+        {
+            if (OperandType::R64==at)
+                return encodeInsS<I_JE_R64_T>(a);
+            if (OperandType::I64==at)
+                return encodeInsS<I_JE_I64_T>(a);
+            if (OperandType::IN64==at)
+                return encodeInsSN<I_JE_I64_T>(pNumber, a);
+        }
+        else if ("jg"==ins)
+        {
+            if (OperandType::R64==at)
+                return encodeInsS<I_JG_R64_T>(a);
+            if (OperandType::I64==at)
+                return encodeInsS<I_JG_I64_T>(a);
+            if (OperandType::IN64==at)
+                return encodeInsSN<I_JG_I64_T>(pNumber, a);
+        }
+        else if ("jge"==ins)
+        {
+            if (OperandType::R64==at)
+                return encodeInsS<I_JGE_R64_T>(a);
+            if (OperandType::I64==at)
+                return encodeInsS<I_JGE_I64_T>(a);
+            if (OperandType::IN64==at)
+                return encodeInsSN<I_JGE_I64_T>(pNumber, a);
+        }
+        else if ("jl"==ins)
+        {
+            if (OperandType::R64==at)
+                return encodeInsS<I_JL_R64_T>(a);
+            if (OperandType::I64==at)
+                return encodeInsS<I_JL_I64_T>(a);
+            if (OperandType::IN64==at)
+                return encodeInsSN<I_JL_I64_T>(pNumber, a);
+        }
+        else if ("jle"==ins)
+        {
+            if (OperandType::R64==at)
+                return encodeInsS<I_JLE_R64_T>(a);
+            if (OperandType::I64==at)
+                return encodeInsS<I_JLE_I64_T>(a);
+            if (OperandType::IN64==at)
+                return encodeInsSN<I_JLE_I64_T>(pNumber, a);
+        }
+        else if ("ja"==ins)
+        {
+            if (OperandType::R64==at)
+                return encodeInsS<I_JA_R64_T>(a);
+            if (OperandType::I64==at)
+                return encodeInsS<I_JA_I64_T>(a);
+            if (OperandType::IN64==at)
+                return encodeInsSN<I_JA_I64_T>(pNumber, a);
+        }
+        else if ("jae"==ins)
+        {
+            if (OperandType::R64==at)
+                return encodeInsS<I_JAE_R64_T>(a);
+            if (OperandType::I64==at)
+                return encodeInsS<I_JAE_I64_T>(a);
+            if (OperandType::IN64==at)
+                return encodeInsSN<I_JAE_I64_T>(pNumber, a);
+        }
+        else if ("jb"==ins)
+        {
+            if (OperandType::R64==at)
+                return encodeInsS<I_JB_R64_T>(a);
+            if (OperandType::I64==at)
+                return encodeInsS<I_JB_I64_T>(a);
+            if (OperandType::IN64==at)
+                return encodeInsSN<I_JB_I64_T>(pNumber, a);
+        }
+        else if ("jbe"==ins)
+        {
+            if (OperandType::R64==at)
+                return encodeInsS<I_JBE_R64_T>(a);
+            if (OperandType::I64==at)
+                return encodeInsS<I_JBE_I64_T>(a);
+            if (OperandType::IN64==at)
+                return encodeInsSN<I_JBE_I64_T>(pNumber, a);
+        }
+        else if ("call"==ins)
+        {
+            if (OperandType::R64==at)
+                return encodeInsS<I_CALL_R64_T>(a);
+            if (OperandType::I64==at)
+                return encodeInsS<I_CALL_I64_T>(a);
+            if (OperandType::IN64==at)
+                return encodeInsSN<I_CALL_I64_T>(pNumber, a);
+        }
+        else if ("ret"==ins)
+        {
+            return encodeIns<I_RET_T>();
+        }
+        else if ("push"==ins)
+        {
+            if (OperandType::R64==at)
+                return encodeInsS<I_PUSH_R64_T>(a);
+        }
+        else if ("pop"==ins)
+        {
+            if (OperandType::R64==at)
+                return encodeInsS<I_POP_R64_T>(a);
+        }
+        else if ("syscall"==ins)
+        {
+            return encodeIns<I_SYSCALL_T>();
+        }
+        throw std::runtime_error(std::string{} + "unhandled instruction: " + ins + " at line: " + std::to_string(pNumber));
     }
-// struct UnresolvedAddress
-// {
-//     enum class AdddressType {Absolute, Relative};
-//     AdddressType addresstype;
-//     size_t pc;
-//     size_t offset;
-//     std::string symbol;
-//     size_t number;
-// };
+
     void fillUnresolved()
     {
         for (const auto& i : mUnresolvedAddress)
@@ -510,17 +760,431 @@ private:
             if (mSymbolTable.end() == found)
                 throw std::runtime_error(std::string{} + "Unreference symbol: " + i.symbol + " at line: " + std::to_string(i.number));
 
-            if (UnresolvedAddress::AdddressType::Absolute == i.addresstype)
-            {
-                new (mByteCode.data()+i.pc+i.offset) size_t(found->second.address);
-            }
-            // TODO: resolve relative
+            new (mByteCode.data()+i.pc+i.offset) size_t(found->second.address);
         }
     }
+
     std::vector<std::string> mKeywordData = {"ascii", "byte", "word", "dword", "qword"};
     std::vector<uint8_t> mByteCode;
     std::map<std::string, SymbolInfo> mSymbolTable;
     std::list<UnresolvedAddress> mUnresolvedAddress;
+};
+
+class VirtualMachine
+{
+public:
+    VirtualMachine(std::vector<uint8_t>& pByteCode)
+        : mByteCode(pByteCode)
+    {}
+    void run()
+    {
+        while(1)
+        {
+            uint8_t* ins = mByteCode.data() + mProgramCounter;
+            process(ins);
+        }
+    }
+private:
+    void process(uint8_t* pIns)
+    {
+        auto opCode = *pIns;
+        switch(opCode)
+        {
+            case I_MOV_R64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOV_R64_I8_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOV_R64_I16_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOV_R64_I32_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOV_R64_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOVZX_R64_BYTE_PTR_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOVZX_R64_WORD_PTR_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOVZX_R64_DWORD_PTR_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOVZX_R64_QWORD_PTR_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOVSX_R64_BYTE_PTR_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOVSX_R64_WORD_PTR_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOVSX_R64_DWORD_PTR_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOVSX_R64_QWORD_PTR_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOVZX_R64_BYTE_PTR_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOVZX_R64_WORD_PTR_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOVZX_R64_DWORD_PTR_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOVZX_R64_QWORD_PTR_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOVSX_R64_BYTE_PTR_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOVSX_R64_WORD_PTR_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOVSX_R64_DWORD_PTR_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOVSX_R64_QWORD_PTR_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOV_BYTE_PTR_R64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOV_WORD_PTR_R64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOV_DWORD_PTR_R64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOV_QWORD_PTR_R64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOV_BYTE_PTR_I64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOV_WORD_PTR_I64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOV_DWORD_PTR_I64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MOV_QWORD_PTR_I64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_ADD_R64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_SUB_R64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MUL_R64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_DIV_R64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_ADD_R64_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_SUB_R64_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_MUL_R64_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_DIV_R64_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_SAR_R64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_SHR_R64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_SHL_R64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_SAR_R64_I8_T::opcode:
+            {
+                break;
+            }
+
+            case I_SHR_R64_I8_T::opcode:
+            {
+                break;
+            }
+
+            case I_SHL_R64_I8_T::opcode:
+            {
+                break;
+            }
+
+            case I_AND_R64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_OR_R64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_XOR_R64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_NOT_R64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_CMP_R64_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_AND_R64_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_OR_R64_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_XOR_R64_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_NOT_R64_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_CMP_R64_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JE_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JG_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JGE_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JL_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JLE_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JA_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JAE_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JB_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JBE_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_CALL_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JE_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JG_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JGE_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JL_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JLE_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JA_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JAE_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JB_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_JBE_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_CALL_I64_T::opcode:
+            {
+                break;
+            }
+
+            case I_RET_T::opcode:
+            {
+                break;
+            }
+
+            case I_PUSH_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_POP_R64_T::opcode:
+            {
+                break;
+            }
+
+            case I_SYSCALL_T::opcode:
+            {
+                break;
+            }
+
+        };
+    }
+
+    uint64_t mRegisters[26]{};
+    uint64_t& mAccumulator    = mRegisters['a'-'a'];
+    uint64_t& mProgramCounter = mRegisters['p'-'a'];
+    uint64_t& mStackPointer   = mRegisters['s'-'a'];
+    uint64_t& mFlagRegister   = mRegisters['f'-'a'];
+
+    std::vector<uint8_t>& mByteCode;
 };
 
 } // namespace tinymachine

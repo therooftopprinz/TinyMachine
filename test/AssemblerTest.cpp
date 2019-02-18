@@ -73,6 +73,7 @@ TEST_F(AssemblerTest, should_getOperandType_imm)
     EXPECT_EQ(Assembler::OperandType::I32, Assembler::getOperandType("4294967295"));
     EXPECT_EQ(Assembler::OperandType::I64, Assembler::getOperandType("-1"));
 }
+
 TEST_F(AssemblerTest, should_generateInstruction_mov)
 {
     std::string src = R"(
@@ -83,10 +84,10 @@ TEST_F(AssemblerTest, should_generateInstruction_mov)
                 mov a, 4294967295
                 mov a, -1
 
-                mov byte ptr[a], b
-                mov word ptr[a], b
-                mov dword ptr[a], b
-                mov qword ptr[a], b
+                mov byte ptr[c], b
+                mov word ptr[c], b
+                mov dword ptr[c], b
+                mov qword ptr[c], b
 
                 mov byte ptr[after_main], b
                 mov word ptr[after_main], b
@@ -99,4 +100,61 @@ TEST_F(AssemblerTest, should_generateInstruction_mov)
         )";
     Assembler m(src);
     std::cout << hexify(m.getByteCode().data(), m.getByteCode().size()) << "\n";
+}
+
+// 06XXYY               - MOVZX    REG64, BYTE PTR [REG64]
+// 07XXYY               - MOVZX    REG64, WORD PTR [REG64]
+// 08XXYY               - MOVZX    REG64, DWORD PTR[REG64]
+// 09XXYY               - MOVZX    REG64, QWORD PTR[REG64]
+// 0EXXYYYYYYYYYYYYYYYY - MOVZX    REG64, BYTE PTR [IMM64]
+// 0FXXYYYYYYYYYYYYYYYY - MOVZX    REG64, WORD PTR [IMM64]
+// 10XXYYYYYYYYYYYYYYYY - MOVZX    REG64, DWORD PTR[IMM64]
+// 11XXYYYYYYYYYYYYYYYY - MOVZX    REG64, QWORD PTR[IMM64]
+// 0EXXYYYYYYYYYYYYYYYY - MOVZX    REG64, BYTE PTR [IMM64]
+// 0FXXYYYYYYYYYYYYYYYY - MOVZX    REG64, WORD PTR [IMM64]
+// 10XXYYYYYYYYYYYYYYYY - MOVZX    REG64, DWORD PTR[IMM64]
+// 11XXYYYYYYYYYYYYYYYY - MOVZX    REG64, QWORD PTR[IMM64]
+
+TEST_F(AssemblerTest, should_generateInstruction_movzx)
+{
+    std::string src = R"(
+            main:
+                movzx b, byte ptr [c]
+                movzx b, word ptr [c]
+                movzx b, dword ptr[c]
+                movzx b, qword ptr[c]
+                movzx b, byte ptr [1]
+                movzx b, word ptr [2]
+                movzx b, dword ptr[3]
+                movzx b, qword ptr[4]
+                movzx b, byte ptr [after_main]
+                movzx b, word ptr [after_main]
+                movzx b, dword ptr[after_main]
+                movzx b, qword ptr[after_main]
+            after_main:
+        )";
+    Assembler m(src);
+    std::cout << m.getByteCode().size() << " = " << hexify(m.getByteCode().data(), m.getByteCode().size()) << "\n";
+}
+
+TEST_F(AssemblerTest, should_generateInstruction_movsx)
+{
+    std::string src = R"(
+            main:
+                movsx b, byte ptr [c]
+                movsx b, word ptr [c]
+                movsx b, dword ptr[c]
+                movsx b, qword ptr[c]
+                movsx b, byte ptr [1]
+                movsx b, word ptr [2]
+                movsx b, dword ptr[3]
+                movsx b, qword ptr[4]
+                movsx b, byte ptr [after_main]
+                movsx b, word ptr [after_main]
+                movsx b, dword ptr[after_main]
+                movsx b, qword ptr[after_main]
+            after_main:
+        )";
+    Assembler m(src);
+    std::cout << m.getByteCode().size() << " = " << hexify(m.getByteCode().data(), m.getByteCode().size()) << "\n";
 }
