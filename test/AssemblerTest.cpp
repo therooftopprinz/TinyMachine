@@ -9,7 +9,7 @@
 using namespace tinymachine;
 using namespace ::testing;
 
-std::string hexify(uint8_t *pData, size_t pCount)
+inline std::string hexify(uint8_t *pData, size_t pCount)
 {
     std::stringstream ss;
     for (size_t i=0; i<pCount; i++)

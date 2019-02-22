@@ -17,7 +17,7 @@ namespace tinymachine
 template<size_t N, bool IsDecode, typename Operands, typename... Ts>
 struct Codec
 {
-    Codec(uint8_t* pPC, Operands& pOperands){}
+    Codec(uint8_t*, Operands&){}
 };
 
 template<size_t N, bool IsDecode, typename Operands, typename T, typename... Ts>
@@ -128,12 +128,12 @@ using I_SHL_R64_I8_T                     = Instruction<0x2B, uint8_t, uint8_t>;
 using I_AND_R64_R64_T                    = Instruction<0x2C, uint8_t, uint8_t>;
 using I_OR_R64_R64_T                     = Instruction<0x2E, uint8_t, uint8_t>;
 using I_XOR_R64_R64_T                    = Instruction<0x2F, uint8_t, uint8_t>;
-using I_NOT_R64_R64_T                    = Instruction<0x30, uint8_t, uint8_t>;
+using I_NOT_R64_T                        = Instruction<0x30, uint8_t>;
 using I_CMP_R64_R64_T                    = Instruction<0x31, uint8_t, uint8_t>;
 using I_AND_R64_I64_T                    = Instruction<0x32, uint8_t, uint64_t>;
 using I_OR_R64_I64_T                     = Instruction<0x33, uint8_t, uint64_t>;
 using I_XOR_R64_I64_T                    = Instruction<0x34, uint8_t, uint64_t>;
-using I_NOT_R64_I64_T                    = Instruction<0x35, uint8_t, uint64_t>;
+using I_UNUSED0                          = Instruction<0x35>;
 using I_CMP_R64_I64_T                    = Instruction<0x36, uint8_t, uint64_t>;
 using I_JE_R64_T                         = Instruction<0x37, uint8_t>;
 using I_JG_R64_T                         = Instruction<0x38, uint8_t>;
@@ -630,10 +630,15 @@ private:
         }
         else if ("not"==ins)
         {
-            if (OperandType::R64==at && OperandType::R64==bt)
-                return encodeMov8_8<I_NOT_R64_R64_T>(a, b);
-            if (OperandType::R64==at && OperandType::I8==bt)
-                return encodeMov8_S<I_NOT_R64_I64_T>(a, b);
+            if (OperandType::R64==at)
+            {
+                auto basesize = mByteCode.size();
+                mByteCode.resize(basesize + I_NOT_R64_T::size());
+                I_NOT_R64_T i(mByteCode.data()+basesize);
+                i.get<0>() = a.back()-'a';
+                i.encode();
+                return;
+            }
         }
         else if ("cmp"==ins)
         {
@@ -774,47 +779,104 @@ private:
 class VirtualMachine
 {
 public:
-    VirtualMachine(std::vector<uint8_t>& pByteCode)
+    VirtualMachine(std::vector<uint8_t>& pByteCode, size_t memorySize)
         : mByteCode(pByteCode)
-    {}
-    void run()
     {
-        while(1)
-        {
-            uint8_t* ins = mByteCode.data() + mProgramCounter;
-            process(ins);
-        }
+        mByteCode.resize(memorySize);
+        mStackPointer = memorySize;
     }
+
+    void step()
+    {
+        uint8_t* ins = mByteCode.data() + mProgramCounter;
+        process(ins);
+    }
+
+    void registersSyscallHandler(uint8_t id, std::function<void(uint64_t* regs, std::vector<uint8_t>& memory)> handler)
+    {
+        mSyscallHandler.emplace(id, handler);
+    }
+
+    constexpr static uint64_t FLAG_EQ        = 1;
+    constexpr static uint64_t FLAG_ABOVE     = 2;
+    constexpr static uint64_t FLAG_BELOW     = 4;
+    constexpr static uint64_t FLAG_GREATER   = 16;
+    constexpr static uint64_t FLAG_LESSER    = 32;
+
 private:
 
     template <typename T>
-    void doMovR8_Ix(const uint8_t* pIns)
+    void doMovR8_Ix(uint8_t* pIns)
     {
         T i(pIns);
         i.decode();
         auto b = i.template get<1>();
         mRegisters[i.template get<0>()] = ssize_t(std::make_signed_t<decltype(b)>(b));
         mProgramCounter += T::size();
-        break;
     }
 
     template <typename T, typename X>
-    void doMovzxR64_xPtrR64(const uint8_t* pIns)
+    void doMovzxR64_xPtrR64(uint8_t* pIns)
     {
         T i(pIns);
+        i.decode();
         X b;
         std::memcpy(&b, mByteCode.data() + mRegisters[i.template get<1>()], sizeof(X));
-        &mRegisters[i.template get<0>()] = b;
+        mRegisters[i.template get<0>()] = b;
         mProgramCounter += T::size();
     }
 
     template <typename T, typename X>
-    void doMovsxR64_xPtrR64(const uint8_t* pIns)
+    void doMovsxR64_xPtrR64(uint8_t* pIns)
     {
         T i(pIns);
+        i.decode();
         X b;
         std::memcpy(&b, mByteCode.data() + mRegisters[i.template get<1>()], sizeof(X));
-        &mRegisters[i.template get<0>()] = ssize_t(b);
+        mRegisters[i.template get<0>()] = ssize_t(b);
+        mProgramCounter += T::size();
+    }
+
+
+    template <typename T, typename X>
+    void doMovzxR64_xPtrI64(uint8_t* pIns)
+    {
+        T i(pIns);
+        i.decode();
+        X b;
+        std::memcpy(&b, mByteCode.data() + i.template get<1>(), sizeof(X));
+        mRegisters[i.template get<0>()] = b;
+        mProgramCounter += T::size();
+    }
+
+    template <typename T, typename X>
+    void doMovsxR64_xPtrI64(uint8_t* pIns)
+    {
+        T i(pIns);
+        i.decode();
+        X b;
+        std::memcpy(&b, mByteCode.data() + i.template get<1>(), sizeof(X));
+        mRegisters[i.template get<0>()] = ssize_t(b);
+        mProgramCounter += T::size();
+    }
+
+    template <typename T, typename X>
+    void doMovxPtrR64_R64(uint8_t* pIns)
+    {
+        T i(pIns);
+        i.decode();
+        X b = mRegisters[i.template get<1>()];
+        std::memcpy(mByteCode.data() + mRegisters[i.template get<0>()], &b, sizeof(X));
+        mProgramCounter += T::size();
+    }
+
+    template <typename T, typename X>
+    void doMovxPtrI64_R64(uint8_t* pIns)
+    {
+        T i(pIns);
+        i.decode();
+        X b = mRegisters[i.template get<1>()];
+        std::memcpy(mByteCode.data() + i.template get<0>(), &b, sizeof(X));
         mProgramCounter += T::size();
     }
 
@@ -827,7 +889,7 @@ private:
             {
                 I_MOV_R64_R64_T i(pIns);
                 i.decode();
-                mRegisters[i.get<0>()] = mRegisters[i.get<1>()]
+                mRegisters[i.get<0>()] = mRegisters[i.get<1>()];
                 mProgramCounter += I_MOV_R64_R64_T::size();
                 break;
             }
@@ -900,396 +962,700 @@ private:
 
             case I_MOVSX_R64_QWORD_PTR_R64_T::opcode:
             {
-                I_MOVSX_R64_QWORD_PTR_R64_T i(pIns);
                 doMovsxR64_xPtrR64<I_MOVSX_R64_QWORD_PTR_R64_T, int64_t>(pIns);
                 break;
             }
 
             case I_MOVZX_R64_BYTE_PTR_I64_T::opcode:
             {
-                I_MOVZX_R64_BYTE_PTR_I64_T i(pIns);
+                doMovzxR64_xPtrI64<I_MOVZX_R64_BYTE_PTR_I64_T, uint8_t>(pIns);
                 break;
             }
 
             case I_MOVZX_R64_WORD_PTR_I64_T::opcode:
             {
-                I_MOVZX_R64_WORD_PTR_I64_T i(pIns);
+                doMovzxR64_xPtrI64<I_MOVZX_R64_WORD_PTR_I64_T, uint16_t>(pIns);
                 break;
             }
 
             case I_MOVZX_R64_DWORD_PTR_I64_T::opcode:
             {
-                I_MOVZX_R64_DWORD_PTR_I64_T i(pIns);
+                doMovzxR64_xPtrI64<I_MOVZX_R64_DWORD_PTR_I64_T, uint32_t>(pIns);
                 break;
             }
 
             case I_MOVZX_R64_QWORD_PTR_I64_T::opcode:
             {
-                I_MOVZX_R64_QWORD_PTR_I64_T i(pIns);
+                doMovzxR64_xPtrI64<I_MOVZX_R64_QWORD_PTR_I64_T, uint64_t>(pIns);
                 break;
             }
 
             case I_MOVSX_R64_BYTE_PTR_I64_T::opcode:
             {
-                I_MOVSX_R64_BYTE_PTR_I64_T i(pIns);
+                doMovsxR64_xPtrI64<I_MOVSX_R64_BYTE_PTR_I64_T, int8_t>(pIns);
                 break;
             }
 
             case I_MOVSX_R64_WORD_PTR_I64_T::opcode:
             {
-                I_MOVSX_R64_WORD_PTR_I64_T i(pIns);
+                doMovsxR64_xPtrI64<I_MOVSX_R64_WORD_PTR_I64_T, int16_t>(pIns);
                 break;
             }
 
             case I_MOVSX_R64_DWORD_PTR_I64_T::opcode:
             {
-                I_MOVSX_R64_DWORD_PTR_I64_T i(pIns);
+                doMovsxR64_xPtrI64<I_MOVSX_R64_DWORD_PTR_I64_T, int32_t>(pIns);
                 break;
             }
 
             case I_MOVSX_R64_QWORD_PTR_I64_T::opcode:
             {
-                I_MOVSX_R64_QWORD_PTR_I64_T i(pIns);
+                doMovsxR64_xPtrI64<I_MOVSX_R64_QWORD_PTR_I64_T, int64_t>(pIns);
                 break;
             }
 
             case I_MOV_BYTE_PTR_R64_R64_T::opcode:
             {
-                I_MOV_BYTE_PTR_R64_R64_T i(pIns);
+                doMovxPtrR64_R64<I_MOV_BYTE_PTR_R64_R64_T, uint8_t>(pIns);
                 break;
             }
 
             case I_MOV_WORD_PTR_R64_R64_T::opcode:
             {
-                I_MOV_WORD_PTR_R64_R64_T i(pIns);
+                doMovxPtrR64_R64<I_MOV_WORD_PTR_R64_R64_T, uint16_t>(pIns);
                 break;
             }
 
             case I_MOV_DWORD_PTR_R64_R64_T::opcode:
             {
-                I_MOV_DWORD_PTR_R64_R64_T i(pIns);
+                doMovxPtrR64_R64<I_MOV_DWORD_PTR_R64_R64_T, uint32_t>(pIns);
                 break;
             }
 
             case I_MOV_QWORD_PTR_R64_R64_T::opcode:
             {
-                I_MOV_QWORD_PTR_R64_R64_T i(pIns);
+                doMovxPtrR64_R64<I_MOV_QWORD_PTR_R64_R64_T, uint64_t>(pIns);
                 break;
             }
 
             case I_MOV_BYTE_PTR_I64_R64_T::opcode:
             {
-                I_MOV_BYTE_PTR_I64_R64_T i(pIns);
+                doMovxPtrI64_R64<I_MOV_BYTE_PTR_I64_R64_T, uint8_t>(pIns);
                 break;
             }
 
             case I_MOV_WORD_PTR_I64_R64_T::opcode:
             {
-                I_MOV_WORD_PTR_I64_R64_T i(pIns);
+                doMovxPtrI64_R64<I_MOV_WORD_PTR_I64_R64_T, uint16_t>(pIns);
                 break;
             }
 
             case I_MOV_DWORD_PTR_I64_R64_T::opcode:
             {
-                I_MOV_DWORD_PTR_I64_R64_T i(pIns);
+                doMovxPtrI64_R64<I_MOV_DWORD_PTR_I64_R64_T, uint32_t>(pIns);
                 break;
             }
 
             case I_MOV_QWORD_PTR_I64_R64_T::opcode:
             {
-                I_MOV_QWORD_PTR_I64_R64_T i(pIns);
+                doMovxPtrI64_R64<I_MOV_QWORD_PTR_I64_R64_T, uint64_t>(pIns);
                 break;
             }
 
             case I_ADD_R64_R64_T::opcode:
             {
                 I_ADD_R64_R64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = mRegisters[i.get<0>()];
+                uint64_t c = a + b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_ADD_R64_R64_T::size();
                 break;
             }
 
             case I_SUB_R64_R64_T::opcode:
             {
                 I_SUB_R64_R64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = mRegisters[i.get<0>()];
+                uint64_t c = a - b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_SUB_R64_R64_T::size();
                 break;
             }
 
             case I_MUL_R64_R64_T::opcode:
             {
                 I_MUL_R64_R64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = mRegisters[i.get<0>()];
+                uint64_t c = a * b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_MUL_R64_R64_T::size();
                 break;
             }
 
             case I_DIV_R64_R64_T::opcode:
             {
                 I_DIV_R64_R64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = mRegisters[i.get<0>()];
+                uint64_t c = a / b;
+                mRegisters[i.get<0>()] = c;
+                mRegisters[0] = a % b;
+                mProgramCounter += I_DIV_R64_R64_T::size();
                 break;
             }
 
             case I_ADD_R64_I64_T::opcode:
             {
                 I_ADD_R64_I64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = i.get<1>();
+                uint64_t c = a + b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_ADD_R64_I64_T::size();
                 break;
             }
 
             case I_SUB_R64_I64_T::opcode:
             {
                 I_SUB_R64_I64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = i.get<1>();
+                uint64_t c = a - b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_SUB_R64_I64_T::size();
                 break;
             }
 
             case I_MUL_R64_I64_T::opcode:
             {
                 I_MUL_R64_I64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = i.get<1>();
+                uint64_t c = a * b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_MUL_R64_I64_T::size();
                 break;
             }
 
             case I_DIV_R64_I64_T::opcode:
             {
                 I_DIV_R64_I64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = i.get<1>();
+                uint64_t c = a / b;
+                mRegisters[i.get<0>()] = c;
+                mRegisters[0] = a % b;
+                mProgramCounter += I_DIV_R64_I64_T::size();
                 break;
             }
 
             case I_SAR_R64_R64_T::opcode:
             {
                 I_SAR_R64_R64_T i(pIns);
+                i.decode();
+                int64_t a = mRegisters[i.get<0>()];
+                uint64_t b = mRegisters[i.get<1>()];
+                uint64_t c = a >> b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_SAR_R64_R64_T::size();
                 break;
             }
 
             case I_SHR_R64_R64_T::opcode:
             {
                 I_SHR_R64_R64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = mRegisters[i.get<1>()];
+                uint64_t c = a >> b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_SHR_R64_R64_T::size();
                 break;
             }
 
             case I_SHL_R64_R64_T::opcode:
             {
                 I_SHL_R64_R64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = mRegisters[i.get<1>()];
+                uint64_t c = a << b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_SHL_R64_R64_T::size();
                 break;
             }
 
             case I_SAR_R64_I8_T::opcode:
             {
                 I_SAR_R64_I8_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint8_t  b = i.get<1>();
+                uint64_t c = a >> b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_SAR_R64_I8_T::size();
                 break;
             }
 
             case I_SHR_R64_I8_T::opcode:
             {
                 I_SHR_R64_I8_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint8_t  b = i.get<1>();
+                uint64_t c = a >> b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_SHR_R64_I8_T::size();
                 break;
             }
 
             case I_SHL_R64_I8_T::opcode:
             {
                 I_SHL_R64_I8_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint8_t  b = i.get<1>();
+                uint64_t c = a << b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_SHL_R64_I8_T::size();
                 break;
             }
 
             case I_AND_R64_R64_T::opcode:
             {
                 I_AND_R64_R64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = mRegisters[i.get<1>()];
+                uint64_t c = a & b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_AND_R64_R64_T::size();
                 break;
             }
 
             case I_OR_R64_R64_T::opcode:
             {
                 I_OR_R64_R64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = mRegisters[i.get<1>()];
+                uint64_t c = a | b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_OR_R64_R64_T::size();
                 break;
             }
 
             case I_XOR_R64_R64_T::opcode:
             {
                 I_XOR_R64_R64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = mRegisters[i.get<1>()];
+                uint64_t c = a ^ b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_XOR_R64_R64_T::size();
                 break;
             }
 
-            case I_NOT_R64_R64_T::opcode:
+            case I_NOT_R64_T::opcode:
             {
-                I_NOT_R64_R64_T i(pIns);
+                I_NOT_R64_T i(pIns);
+                i.decode();
+                mRegisters[i.get<0>()] = ~mRegisters[i.get<0>()];
+                mProgramCounter += I_NOT_R64_T::size();
                 break;
             }
 
             case I_CMP_R64_R64_T::opcode:
             {
                 I_CMP_R64_R64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = mRegisters[i.get<1>()];
+                mFlagRegister = 0;
+                if (a==b) mFlagRegister |= FLAG_EQ;
+                if (a>b)  mFlagRegister |= FLAG_ABOVE;
+                if (a<b)  mFlagRegister |= FLAG_BELOW;
+                if (int64_t(a)==int64_t(b)) mFlagRegister |= FLAG_EQ;
+                if (int64_t(a)>int64_t(b))  mFlagRegister |= FLAG_GREATER;
+                if (int64_t(a)<int64_t(b))  mFlagRegister |= FLAG_LESSER;
+                mProgramCounter += I_CMP_R64_R64_T::size();
                 break;
             }
 
             case I_AND_R64_I64_T::opcode:
             {
                 I_AND_R64_I64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = i.get<1>();
+                uint64_t c = a ^ b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_AND_R64_I64_T::size();
                 break;
             }
 
             case I_OR_R64_I64_T::opcode:
             {
                 I_OR_R64_I64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = i.get<1>();
+                uint64_t c = a ^ b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_OR_R64_I64_T::size();
                 break;
             }
 
             case I_XOR_R64_I64_T::opcode:
             {
                 I_XOR_R64_I64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = i.get<1>();
+                uint64_t c = a ^ b;
+                mRegisters[i.get<0>()] = c;
+                mProgramCounter += I_XOR_R64_I64_T::size();
                 break;
             }
 
-            case I_NOT_R64_I64_T::opcode:
+            case I_UNUSED0::opcode:
             {
-                I_NOT_R64_I64_T i(pIns);
+                I_UNUSED0 i(pIns);
+                mProgramCounter += I_UNUSED0::size();
                 break;
             }
 
             case I_CMP_R64_I64_T::opcode:
             {
                 I_CMP_R64_I64_T i(pIns);
+                i.decode();
+                uint64_t a = mRegisters[i.get<0>()];
+                uint64_t b = i.get<1>();
+                mFlagRegister = 0;
+                if (a==b) mFlagRegister |= FLAG_EQ;
+                if (a>b)  mFlagRegister |= FLAG_ABOVE;
+                if (a<b)  mFlagRegister |= FLAG_BELOW;
+                if (int64_t(a)==int64_t(b)) mFlagRegister |= FLAG_EQ;
+                if (int64_t(a)>int64_t(b))  mFlagRegister |= FLAG_GREATER;
+                if (int64_t(a)<int64_t(b))  mFlagRegister |= FLAG_LESSER;
+                mProgramCounter += I_CMP_R64_I64_T::size();
                 break;
             }
 
             case I_JE_R64_T::opcode:
             {
                 I_JE_R64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_EQ)
+                {
+                    mProgramCounter = mRegisters[i.get<0>()];
+                    break;
+                }
+                mProgramCounter += I_JE_R64_T::size();
                 break;
             }
 
             case I_JG_R64_T::opcode:
             {
                 I_JG_R64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_GREATER)
+                {
+                    mProgramCounter = mRegisters[i.get<0>()];
+                    break;
+                }
+                mProgramCounter += I_JG_R64_T::size();
                 break;
             }
 
             case I_JGE_R64_T::opcode:
             {
                 I_JGE_R64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_EQ && mFlagRegister&FLAG_GREATER)
+                {
+                    mProgramCounter = mRegisters[i.get<0>()];
+                    break;
+                }
+                mProgramCounter += I_JGE_R64_T::size();
                 break;
             }
 
             case I_JL_R64_T::opcode:
             {
                 I_JL_R64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_LESSER)
+                {
+                    mProgramCounter = mRegisters[i.get<0>()];
+                    break;
+                }
+                mProgramCounter += I_JL_R64_T::size();
                 break;
             }
 
             case I_JLE_R64_T::opcode:
             {
                 I_JLE_R64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_EQ && mFlagRegister&FLAG_LESSER)
+                {
+                    mProgramCounter = mRegisters[i.get<0>()];
+                    break;
+                }
+                mProgramCounter += I_JLE_R64_T::size();
                 break;
             }
 
             case I_JA_R64_T::opcode:
             {
                 I_JA_R64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_ABOVE)
+                {
+                    mProgramCounter = mRegisters[i.get<0>()];
+                    break;
+                }
+                mProgramCounter += I_JA_R64_T::size();
                 break;
             }
 
             case I_JAE_R64_T::opcode:
             {
                 I_JAE_R64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_EQ && mFlagRegister&FLAG_ABOVE)
+                {
+                    mProgramCounter = mRegisters[i.get<0>()];
+                    break;
+                }
+                mProgramCounter += I_JAE_R64_T::size();
                 break;
             }
 
             case I_JB_R64_T::opcode:
             {
                 I_JB_R64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_BELOW)
+                {
+                    mProgramCounter = mRegisters[i.get<0>()];
+                    break;
+                }
+                mProgramCounter += I_JB_R64_T::size();
                 break;
             }
 
             case I_JBE_R64_T::opcode:
             {
                 I_JBE_R64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_EQ && mFlagRegister&FLAG_BELOW)
+                {
+                    mProgramCounter = mRegisters[i.get<0>()];
+                    break;
+                }
+                mProgramCounter += I_JBE_R64_T::size();
                 break;
             }
 
             case I_CALL_R64_T::opcode:
             {
                 I_CALL_R64_T i(pIns);
+                i.decode();
+                uint64_t returnAddress = mProgramCounter + I_CALL_R64_T::size();
+                mStackPointer -= sizeof(returnAddress);
+                std::memcpy(mByteCode.data() + mStackPointer, &returnAddress, sizeof(returnAddress));
+                mProgramCounter = mRegisters[i.get<0>()];
                 break;
             }
 
             case I_JE_I64_T::opcode:
             {
                 I_JE_I64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_EQ)
+                {
+                    mProgramCounter = i.get<0>();
+                    break;
+                }
+                mProgramCounter += I_JE_I64_T::size();
                 break;
             }
 
             case I_JG_I64_T::opcode:
             {
                 I_JG_I64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_GREATER)
+                {
+                    mProgramCounter = i.get<0>();
+                    break;
+                }
+                mProgramCounter += I_JG_I64_T::size();
                 break;
             }
 
             case I_JGE_I64_T::opcode:
             {
                 I_JGE_I64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_EQ && mFlagRegister&FLAG_GREATER)
+                {
+                    mProgramCounter = i.get<0>();
+                    break;
+                }
+                mProgramCounter += I_JGE_I64_T::size();
                 break;
             }
 
             case I_JL_I64_T::opcode:
             {
                 I_JL_I64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_LESSER)
+                {
+                    mProgramCounter = i.get<0>();
+                    break;
+                }
+                mProgramCounter += I_JL_I64_T::size();
                 break;
             }
 
             case I_JLE_I64_T::opcode:
             {
                 I_JLE_I64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_EQ && mFlagRegister&FLAG_LESSER)
+                {
+                    mProgramCounter = i.get<0>();
+                    break;
+                }
+                mProgramCounter += I_JLE_I64_T::size();
                 break;
             }
 
             case I_JA_I64_T::opcode:
             {
                 I_JA_I64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_ABOVE)
+                {
+                    mProgramCounter = i.get<0>();
+                    break;
+                }
+                mProgramCounter += I_JA_I64_T::size();
                 break;
             }
 
             case I_JAE_I64_T::opcode:
             {
                 I_JAE_I64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_EQ && mFlagRegister&FLAG_ABOVE)
+                {
+                    mProgramCounter = i.get<0>();
+                    break;
+                }
+                mProgramCounter += I_JAE_I64_T::size();
                 break;
             }
 
             case I_JB_I64_T::opcode:
             {
                 I_JB_I64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_BELOW)
+                {
+                    mProgramCounter = i.get<0>();
+                    break;
+                }
+                mProgramCounter += I_JB_I64_T::size();
                 break;
             }
 
             case I_JBE_I64_T::opcode:
             {
                 I_JBE_I64_T i(pIns);
+                i.decode();
+                if (mFlagRegister&FLAG_EQ && mFlagRegister&FLAG_BELOW)
+                {
+                    mProgramCounter = i.get<0>();
+                    break;
+                }
+                mProgramCounter += I_JBE_I64_T::size();
                 break;
             }
 
             case I_CALL_I64_T::opcode:
             {
                 I_CALL_I64_T i(pIns);
+                i.decode();
+                uint64_t returnAddress = mProgramCounter + I_CALL_I64_T::size();
+                mStackPointer -= sizeof(returnAddress);
+                std::memcpy(mByteCode.data() + mStackPointer, &returnAddress, sizeof(returnAddress));
+                mProgramCounter = i.get<0>();
                 break;
             }
 
             case I_RET_T::opcode:
             {
                 I_RET_T i(pIns);
+                uint64_t returnAddress;
+                std::memcpy(&returnAddress, mByteCode.data() + mStackPointer, sizeof(returnAddress));
+                mStackPointer += sizeof(returnAddress);
+                mProgramCounter = returnAddress;
                 break;
             }
 
             case I_PUSH_R64_T::opcode:
             {
                 I_PUSH_R64_T i(pIns);
+                i.decode();
+                uint64_t pushData = mRegisters[i.get<0>()];
+                std::memcpy(mByteCode.data() + mStackPointer, &pushData, sizeof(pushData));
+                mStackPointer += sizeof(pushData);
+                mProgramCounter += I_PUSH_R64_T::size();
                 break;
             }
 
             case I_POP_R64_T::opcode:
             {
                 I_POP_R64_T i(pIns);
+                i.decode();
+                uint64_t pushData;
+                std::memcpy(&pushData, mByteCode.data() + mStackPointer, sizeof(pushData));
+                mRegisters[i.get<0>()] = pushData;
+                mStackPointer -= sizeof(pushData);
+                mProgramCounter += I_POP_R64_T::size();
                 break;
             }
 
             case I_SYSCALL_T::opcode:
             {
                 I_SYSCALL_T i(pIns);
+                auto callId = mRegisters[0];
+                auto foundIt = mSyscallHandler.find(callId);
+                if (foundIt==mSyscallHandler.end())
+                    std::runtime_error(std::string{}+"unhandled syscall: "+std::to_string(callId)+
+                        " at pc="+std::to_string(mProgramCounter));
+                foundIt->second(mRegisters, mByteCode);
+                mProgramCounter += I_SYSCALL_T::size();
                 break;
             }
-
-        };
+        }
     }
 
     uint64_t mRegisters[26]{};
@@ -1298,6 +1664,7 @@ private:
     uint64_t& mStackPointer   = mRegisters['s'-'a'];
     uint64_t& mFlagRegister   = mRegisters['f'-'a'];
 
+    std::map<uint8_t, std::function<void(uint64_t* regs, std::vector<uint8_t>& memory)>> mSyscallHandler;
     std::vector<uint8_t>& mByteCode;
 };
 
