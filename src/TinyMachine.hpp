@@ -145,20 +145,22 @@ using I_JAE_R64_T                        = Instruction<0x3E, uint8_t>;
 using I_JB_R64_T                         = Instruction<0x3F, uint8_t>;
 using I_JBE_R64_T                        = Instruction<0x40, uint8_t>;
 using I_CALL_R64_T                       = Instruction<0x41, uint8_t>;
-using I_JE_I64_T                         = Instruction<0x42, uint64_t>;
-using I_JG_I64_T                         = Instruction<0x43, uint64_t>;
-using I_JGE_I64_T                        = Instruction<0x44, uint64_t>;
-using I_JL_I64_T                         = Instruction<0x45, uint64_t>;
-using I_JLE_I64_T                        = Instruction<0x46, uint64_t>;
-using I_JA_I64_T                         = Instruction<0x47, uint64_t>;
-using I_JAE_I64_T                        = Instruction<0x48, uint64_t>;
-using I_JB_I64_T                         = Instruction<0x49, uint64_t>;
-using I_JBE_I64_T                        = Instruction<0x4A, uint64_t>;
-using I_CALL_I64_T                       = Instruction<0x4B, uint64_t>;
-using I_RET_T                            = Instruction<0x4C>;
-using I_PUSH_R64_T                       = Instruction<0x4E, uint8_t>;
-using I_POP_R64_T                        = Instruction<0x4F, uint8_t>;
-using I_SYSCALL_T                        = Instruction<0x50>;
+using I_JMP_R64_T                        = Instruction<0x42, uint8_t>;
+using I_JE_I64_T                         = Instruction<0x43, uint64_t>;
+using I_JG_I64_T                         = Instruction<0x44, uint64_t>;
+using I_JGE_I64_T                        = Instruction<0x45, uint64_t>;
+using I_JL_I64_T                         = Instruction<0x46, uint64_t>;
+using I_JLE_I64_T                        = Instruction<0x47, uint64_t>;
+using I_JA_I64_T                         = Instruction<0x48, uint64_t>;
+using I_JAE_I64_T                        = Instruction<0x49, uint64_t>;
+using I_JB_I64_T                         = Instruction<0x4A, uint64_t>;
+using I_JBE_I64_T                        = Instruction<0x4B, uint64_t>;
+using I_CALL_I64_T                       = Instruction<0x4C, uint64_t>;
+using I_JMP_I64_T                        = Instruction<0x4D, uint64_t>;
+using I_RET_T                            = Instruction<0x4E>;
+using I_PUSH_R64_T                       = Instruction<0x4F, uint8_t>;
+using I_POP_R64_T                        = Instruction<0x50, uint8_t>;
+using I_SYSCALL_T                        = Instruction<0x51>;
 
 struct UnresolvedAddress
 {
@@ -306,7 +308,40 @@ private:
             mByteCode.back() = 0;
             return;
         }
-        // TODO: byte word dword qword array
+
+        if ("byte"==pToken[0])
+        {
+            uint8_t data = std::stoul(pToken[1]);
+            auto base = mByteCode.size();
+            mByteCode.resize(base+sizeof(data));
+            std::memcpy(mByteCode.data()+base, &data, sizeof(data));
+            return;
+        }
+        if ("word"==pToken[0])
+        {
+            uint16_t data = std::stoul(pToken[1]);
+            auto base = mByteCode.size();
+            mByteCode.resize(base+sizeof(data));
+            std::memcpy(mByteCode.data()+base, &data, sizeof(data));
+            return;
+        }
+        if ("dword"==pToken[0])
+        {
+            uint32_t data = std::stoul(pToken[1]);
+            auto base = mByteCode.size();
+            mByteCode.resize(base+sizeof(data));
+            std::memcpy(mByteCode.data()+base, &data, sizeof(data));
+            return;
+        }
+        if ("qword"==pToken[0])
+        {
+            uint64_t data = std::stoul(pToken[1]);
+            auto base = mByteCode.size();
+            mByteCode.resize(base+sizeof(data));
+            std::memcpy(mByteCode.data()+base, &data, sizeof(data));
+            return;
+        }
+
         throw std::runtime_error(std::string{} + "Unimplemented data keyword! line: " + pLine);
     }
 
@@ -737,6 +772,15 @@ private:
             if (OperandType::IN64==at)
                 return encodeInsSN<I_CALL_I64_T>(pNumber, a);
         }
+        else if ("jmp"==ins)
+        {
+            if (OperandType::R64==at)
+                return encodeInsS<I_JMP_R64_T>(a);
+            if (OperandType::I64==at)
+                return encodeInsS<I_JMP_I64_T>(a);
+            if (OperandType::IN64==at)
+                return encodeInsSN<I_JMP_I64_T>(pNumber, a);
+        }
         else if ("ret"==ins)
         {
             return encodeIns<I_RET_T>();
@@ -786,6 +830,12 @@ public:
         mStackPointer = memorySize;
     }
 
+    void hotReset()
+    {
+        mStackPointer = mByteCode.size();
+        mProgramCounter = 0;
+    }
+
     void step()
     {
         uint8_t* ins = mByteCode.data() + mProgramCounter;
@@ -797,11 +847,10 @@ public:
         mSyscallHandler.emplace(id, handler);
     }
 
-    constexpr static uint64_t FLAG_EQ        = 1;
-    constexpr static uint64_t FLAG_ABOVE     = 2;
-    constexpr static uint64_t FLAG_BELOW     = 4;
-    constexpr static uint64_t FLAG_GREATER   = 16;
-    constexpr static uint64_t FLAG_LESSER    = 32;
+    constexpr static uint64_t FLAG_ZERO      = 1;
+    constexpr static uint64_t FLAG_CARRY     = 2;
+    constexpr static uint64_t FLAG_OVERFLOW  = 4;
+    constexpr static uint64_t FLAG_SIGN      = 8;
 
 private:
 
@@ -883,6 +932,70 @@ private:
     void process(uint8_t* pIns)
     {
         auto opCode = *pIns;
+        uint64_t dummy;
+        auto setAddFlags = [this](uint64_t a, uint64_t b, uint64_t& c)
+        {
+            c = a+b;
+
+            constexpr uint64_t M = 0x7FFFFFFFFFFFFFFF;
+            constexpr uint64_t N = ~M;
+
+            if (c == 0)
+            {
+                mFlagRegister |= FLAG_ZERO;
+                return;
+            }
+            else
+            {
+                mFlagRegister &= ~FLAG_ZERO;
+            }
+
+            if (c&N)
+            {
+                mFlagRegister |= FLAG_SIGN;
+            }
+            else
+            {
+                mFlagRegister &= ~FLAG_SIGN;
+            }
+
+            bool carryIn = ((a&M) + (b&M))&N;
+            bool msbA = a&N;
+            bool msbB = b&N;
+            bool carryOut = msbA && msbB && carryIn;
+            if (carryOut)
+            {
+                mFlagRegister |= FLAG_CARRY;
+            }
+            else
+            {
+                mFlagRegister &= ~FLAG_CARRY;
+            }
+            if (carryIn ^ carryOut)
+            {
+                mFlagRegister |= FLAG_OVERFLOW;
+            }
+            else
+            {
+                mFlagRegister &= ~FLAG_OVERFLOW;
+            }
+            
+        };
+
+        auto setSubFlags = [setAddFlags, this](uint64_t a, uint64_t b, uint64_t& c)
+        {
+            setAddFlags(a, ~b+1, c);
+
+            if (b>a)
+            {
+                mFlagRegister |= FLAG_CARRY;
+            }
+            else
+            {
+                mFlagRegister &= ~FLAG_CARRY;
+            }            
+        };
+
         switch(opCode)
         {
             case I_MOV_R64_R64_T::opcode:
@@ -1068,8 +1181,7 @@ private:
                 i.decode();
                 uint64_t a = mRegisters[i.get<0>()];
                 uint64_t b = mRegisters[i.get<0>()];
-                uint64_t c = a + b;
-                mRegisters[i.get<0>()] = c;
+                setAddFlags(a, b, mRegisters[i.get<0>()]);
                 mProgramCounter += I_ADD_R64_R64_T::size();
                 break;
             }
@@ -1080,8 +1192,7 @@ private:
                 i.decode();
                 uint64_t a = mRegisters[i.get<0>()];
                 uint64_t b = mRegisters[i.get<0>()];
-                uint64_t c = a - b;
-                mRegisters[i.get<0>()] = c;
+                setSubFlags(a, b, mRegisters[i.get<0>()]);
                 mProgramCounter += I_SUB_R64_R64_T::size();
                 break;
             }
@@ -1117,8 +1228,7 @@ private:
                 i.decode();
                 uint64_t a = mRegisters[i.get<0>()];
                 uint64_t b = i.get<1>();
-                uint64_t c = a + b;
-                mRegisters[i.get<0>()] = c;
+                setAddFlags(a, b, mRegisters[i.get<0>()]);
                 mProgramCounter += I_ADD_R64_I64_T::size();
                 break;
             }
@@ -1129,8 +1239,7 @@ private:
                 i.decode();
                 uint64_t a = mRegisters[i.get<0>()];
                 uint64_t b = i.get<1>();
-                uint64_t c = a - b;
-                mRegisters[i.get<0>()] = c;
+                setSubFlags(a, b, mRegisters[i.get<0>()]);
                 mProgramCounter += I_SUB_R64_I64_T::size();
                 break;
             }
@@ -1283,13 +1392,7 @@ private:
                 i.decode();
                 uint64_t a = mRegisters[i.get<0>()];
                 uint64_t b = mRegisters[i.get<1>()];
-                mFlagRegister = 0;
-                if (a==b) mFlagRegister |= FLAG_EQ;
-                if (a>b)  mFlagRegister |= FLAG_ABOVE;
-                if (a<b)  mFlagRegister |= FLAG_BELOW;
-                if (int64_t(a)==int64_t(b)) mFlagRegister |= FLAG_EQ;
-                if (int64_t(a)>int64_t(b))  mFlagRegister |= FLAG_GREATER;
-                if (int64_t(a)<int64_t(b))  mFlagRegister |= FLAG_LESSER;
+                setSubFlags(a, b, dummy);
                 mProgramCounter += I_CMP_R64_R64_T::size();
                 break;
             }
@@ -1343,13 +1446,7 @@ private:
                 i.decode();
                 uint64_t a = mRegisters[i.get<0>()];
                 uint64_t b = i.get<1>();
-                mFlagRegister = 0;
-                if (a==b) mFlagRegister |= FLAG_EQ;
-                if (a>b)  mFlagRegister |= FLAG_ABOVE;
-                if (a<b)  mFlagRegister |= FLAG_BELOW;
-                if (int64_t(a)==int64_t(b)) mFlagRegister |= FLAG_EQ;
-                if (int64_t(a)>int64_t(b))  mFlagRegister |= FLAG_GREATER;
-                if (int64_t(a)<int64_t(b))  mFlagRegister |= FLAG_LESSER;
+                setSubFlags(a, b, dummy);
                 mProgramCounter += I_CMP_R64_I64_T::size();
                 break;
             }
@@ -1358,7 +1455,7 @@ private:
             {
                 I_JE_R64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_EQ)
+                if (mFlagRegister&FLAG_ZERO)
                 {
                     mProgramCounter = mRegisters[i.get<0>()];
                     break;
@@ -1371,7 +1468,7 @@ private:
             {
                 I_JG_R64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_GREATER)
+                if (!(mFlagRegister&FLAG_ZERO) && (bool(mFlagRegister&FLAG_OVERFLOW) == bool(mFlagRegister&FLAG_SIGN)))
                 {
                     mProgramCounter = mRegisters[i.get<0>()];
                     break;
@@ -1384,7 +1481,7 @@ private:
             {
                 I_JGE_R64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_EQ && mFlagRegister&FLAG_GREATER)
+                if ((mFlagRegister&FLAG_ZERO) && (bool(mFlagRegister&FLAG_OVERFLOW) == bool(mFlagRegister&FLAG_SIGN)))
                 {
                     mProgramCounter = mRegisters[i.get<0>()];
                     break;
@@ -1397,7 +1494,7 @@ private:
             {
                 I_JL_R64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_LESSER)
+                if (!(mFlagRegister&FLAG_ZERO) && bool(mFlagRegister&FLAG_OVERFLOW) != bool(mFlagRegister&FLAG_SIGN))
                 {
                     mProgramCounter = mRegisters[i.get<0>()];
                     break;
@@ -1410,7 +1507,7 @@ private:
             {
                 I_JLE_R64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_EQ && mFlagRegister&FLAG_LESSER)
+                if ((mFlagRegister&FLAG_ZERO) && bool(mFlagRegister&FLAG_OVERFLOW) != bool(mFlagRegister&FLAG_SIGN))
                 {
                     mProgramCounter = mRegisters[i.get<0>()];
                     break;
@@ -1423,7 +1520,7 @@ private:
             {
                 I_JA_R64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_ABOVE)
+                if (!(mFlagRegister&FLAG_ZERO) && !(mFlagRegister&FLAG_CARRY))
                 {
                     mProgramCounter = mRegisters[i.get<0>()];
                     break;
@@ -1436,7 +1533,7 @@ private:
             {
                 I_JAE_R64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_EQ && mFlagRegister&FLAG_ABOVE)
+                if ((mFlagRegister&FLAG_ZERO) && !(mFlagRegister&FLAG_CARRY))
                 {
                     mProgramCounter = mRegisters[i.get<0>()];
                     break;
@@ -1449,7 +1546,7 @@ private:
             {
                 I_JB_R64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_BELOW)
+                if (!(mFlagRegister&FLAG_ZERO) && (mFlagRegister&FLAG_CARRY))
                 {
                     mProgramCounter = mRegisters[i.get<0>()];
                     break;
@@ -1462,7 +1559,7 @@ private:
             {
                 I_JBE_R64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_EQ && mFlagRegister&FLAG_BELOW)
+                if ((mFlagRegister&FLAG_ZERO) && (mFlagRegister&FLAG_CARRY))
                 {
                     mProgramCounter = mRegisters[i.get<0>()];
                     break;
@@ -1482,11 +1579,19 @@ private:
                 break;
             }
 
+            case I_JMP_R64_T::opcode:
+            {
+                I_JMP_R64_T i(pIns);
+                i.decode();
+                mProgramCounter = mRegisters[i.get<0>()];
+                break;
+            }
+
             case I_JE_I64_T::opcode:
             {
                 I_JE_I64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_EQ)
+                if (mFlagRegister&FLAG_ZERO)
                 {
                     mProgramCounter = i.get<0>();
                     break;
@@ -1499,7 +1604,7 @@ private:
             {
                 I_JG_I64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_GREATER)
+                if (!(mFlagRegister&FLAG_ZERO) && (bool(mFlagRegister&FLAG_OVERFLOW) == bool(mFlagRegister&FLAG_SIGN)))
                 {
                     mProgramCounter = i.get<0>();
                     break;
@@ -1512,7 +1617,7 @@ private:
             {
                 I_JGE_I64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_EQ && mFlagRegister&FLAG_GREATER)
+                if ((mFlagRegister&FLAG_ZERO) && (bool(mFlagRegister&FLAG_OVERFLOW) == bool(mFlagRegister&FLAG_SIGN)))
                 {
                     mProgramCounter = i.get<0>();
                     break;
@@ -1525,7 +1630,7 @@ private:
             {
                 I_JL_I64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_LESSER)
+                if (!(mFlagRegister&FLAG_ZERO) && bool(mFlagRegister&FLAG_OVERFLOW) != bool(mFlagRegister&FLAG_SIGN))
                 {
                     mProgramCounter = i.get<0>();
                     break;
@@ -1538,7 +1643,7 @@ private:
             {
                 I_JLE_I64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_EQ && mFlagRegister&FLAG_LESSER)
+                if ((mFlagRegister&FLAG_ZERO) && bool(mFlagRegister&FLAG_OVERFLOW) != bool(mFlagRegister&FLAG_SIGN))
                 {
                     mProgramCounter = i.get<0>();
                     break;
@@ -1551,7 +1656,7 @@ private:
             {
                 I_JA_I64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_ABOVE)
+                if (!(mFlagRegister&FLAG_ZERO) && !(mFlagRegister&FLAG_CARRY))
                 {
                     mProgramCounter = i.get<0>();
                     break;
@@ -1564,7 +1669,7 @@ private:
             {
                 I_JAE_I64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_EQ && mFlagRegister&FLAG_ABOVE)
+                if ((mFlagRegister&FLAG_ZERO) && !(mFlagRegister&FLAG_CARRY))
                 {
                     mProgramCounter = i.get<0>();
                     break;
@@ -1577,7 +1682,7 @@ private:
             {
                 I_JB_I64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_BELOW)
+                if (!(mFlagRegister&FLAG_ZERO) && (mFlagRegister&FLAG_CARRY))
                 {
                     mProgramCounter = i.get<0>();
                     break;
@@ -1590,7 +1695,7 @@ private:
             {
                 I_JBE_I64_T i(pIns);
                 i.decode();
-                if (mFlagRegister&FLAG_EQ && mFlagRegister&FLAG_BELOW)
+                if ((mFlagRegister&FLAG_ZERO) && (mFlagRegister&FLAG_CARRY))
                 {
                     mProgramCounter = i.get<0>();
                     break;
@@ -1606,6 +1711,14 @@ private:
                 uint64_t returnAddress = mProgramCounter + I_CALL_I64_T::size();
                 mStackPointer -= sizeof(returnAddress);
                 std::memcpy(mByteCode.data() + mStackPointer, &returnAddress, sizeof(returnAddress));
+                mProgramCounter = i.get<0>();
+                break;
+            }
+
+            case I_JMP_I64_T::opcode:
+            {
+                I_JMP_I64_T i(pIns);
+                i.decode();
                 mProgramCounter = i.get<0>();
                 break;
             }
@@ -1670,4 +1783,4 @@ private:
 
 } // namespace tinymachine
 
-#endif //__TINYMACHINE_MACHINE_HPP__s
+#endif //__TINYMACHINE_MACHINE_HPP__
