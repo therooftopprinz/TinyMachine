@@ -962,7 +962,7 @@ private:
             bool carryIn = ((a&M) + (b&M))&N;
             bool msbA = a&N;
             bool msbB = b&N;
-            bool carryOut = msbA && msbB && carryIn;
+            bool carryOut = (msbA && msbB) || (msbB && carryIn) || (carryIn && msbA);
             if (carryOut)
             {
                 mFlagRegister |= FLAG_CARRY;
@@ -1481,7 +1481,7 @@ private:
             {
                 I_JGE_R64_T i(pIns);
                 i.decode();
-                if ((mFlagRegister&FLAG_ZERO) && (bool(mFlagRegister&FLAG_OVERFLOW) == bool(mFlagRegister&FLAG_SIGN)))
+                if ((mFlagRegister&FLAG_ZERO) || (bool(mFlagRegister&FLAG_OVERFLOW) == bool(mFlagRegister&FLAG_SIGN)))
                 {
                     mProgramCounter = mRegisters[i.get<0>()];
                     break;
@@ -1507,7 +1507,7 @@ private:
             {
                 I_JLE_R64_T i(pIns);
                 i.decode();
-                if ((mFlagRegister&FLAG_ZERO) && bool(mFlagRegister&FLAG_OVERFLOW) != bool(mFlagRegister&FLAG_SIGN))
+                if ((mFlagRegister&FLAG_ZERO) || bool(mFlagRegister&FLAG_OVERFLOW) != bool(mFlagRegister&FLAG_SIGN))
                 {
                     mProgramCounter = mRegisters[i.get<0>()];
                     break;
@@ -1533,7 +1533,7 @@ private:
             {
                 I_JAE_R64_T i(pIns);
                 i.decode();
-                if ((mFlagRegister&FLAG_ZERO) && !(mFlagRegister&FLAG_CARRY))
+                if ((mFlagRegister&FLAG_ZERO) || !(mFlagRegister&FLAG_CARRY))
                 {
                     mProgramCounter = mRegisters[i.get<0>()];
                     break;
@@ -1559,7 +1559,7 @@ private:
             {
                 I_JBE_R64_T i(pIns);
                 i.decode();
-                if ((mFlagRegister&FLAG_ZERO) && (mFlagRegister&FLAG_CARRY))
+                if ((mFlagRegister&FLAG_ZERO) || (mFlagRegister&FLAG_CARRY))
                 {
                     mProgramCounter = mRegisters[i.get<0>()];
                     break;
@@ -1617,7 +1617,7 @@ private:
             {
                 I_JGE_I64_T i(pIns);
                 i.decode();
-                if ((mFlagRegister&FLAG_ZERO) && (bool(mFlagRegister&FLAG_OVERFLOW) == bool(mFlagRegister&FLAG_SIGN)))
+                if ((mFlagRegister&FLAG_ZERO) || (bool(mFlagRegister&FLAG_OVERFLOW) == bool(mFlagRegister&FLAG_SIGN)))
                 {
                     mProgramCounter = i.get<0>();
                     break;
@@ -1643,7 +1643,7 @@ private:
             {
                 I_JLE_I64_T i(pIns);
                 i.decode();
-                if ((mFlagRegister&FLAG_ZERO) && bool(mFlagRegister&FLAG_OVERFLOW) != bool(mFlagRegister&FLAG_SIGN))
+                if ((mFlagRegister&FLAG_ZERO) || bool(mFlagRegister&FLAG_OVERFLOW) != bool(mFlagRegister&FLAG_SIGN))
                 {
                     mProgramCounter = i.get<0>();
                     break;
@@ -1669,7 +1669,7 @@ private:
             {
                 I_JAE_I64_T i(pIns);
                 i.decode();
-                if ((mFlagRegister&FLAG_ZERO) && !(mFlagRegister&FLAG_CARRY))
+                if ((mFlagRegister&FLAG_ZERO) || !(mFlagRegister&FLAG_CARRY))
                 {
                     mProgramCounter = i.get<0>();
                     break;
@@ -1695,7 +1695,7 @@ private:
             {
                 I_JBE_I64_T i(pIns);
                 i.decode();
-                if ((mFlagRegister&FLAG_ZERO) && (mFlagRegister&FLAG_CARRY))
+                if ((mFlagRegister&FLAG_ZERO) || (mFlagRegister&FLAG_CARRY))
                 {
                     mProgramCounter = i.get<0>();
                     break;

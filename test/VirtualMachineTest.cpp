@@ -59,7 +59,22 @@ TEST(VirtualMachineTest, hellohellohellotinymachine)
     while(!halted)vm.step();
 }
 
-struct CmpTest : Test
+struct CmpTestStruct
+{
+    template <typename T, typename U>
+    CmpTestStruct(T a, U b, uint8_t c, bool res)
+        : a(uint64_t(a))
+        , b(uint64_t(b))
+        , c(c)
+        , res(res)
+    {}
+    uint64_t a;
+    uint64_t b;
+    uint8_t c;
+    bool res;
+};
+
+struct CmpTest : Test, WithParamInterface<CmpTestStruct> 
 {
     CmpTest()
     {
@@ -83,10 +98,11 @@ struct CmpTest : Test
             mRes = res;
         });
     }
-    void test(uint64_t a, uint64_t b, uint8_t c)
+    template<typename T>
+    void test(T a, T b, uint8_t c)
     {
-        mX = a;
-        mY = b;
+        mX = (uint64_t)a;
+        mY = (uint64_t)b;
         mZ = c;
         mSet = false;
         mHalted = false;
@@ -95,7 +111,15 @@ struct CmpTest : Test
         while(!mHalted) mVm.step();
     }
 
-    std::string mSrc = R"(
+    static VirtualMachine mVm;// = VirtualMachine(mM.getByteCode(), 1024);
+    bool mHalted;
+    uint64_t mX, mY;
+    uint8_t mZ;
+    bool mSet;
+    bool mRes;
+};
+
+static std::string cmpTestSrc = R"(
         start:
             jmp main
         _x:
@@ -174,23 +198,36 @@ struct CmpTest : Test
             xor a, a
             syscall
     )";
-    Assembler mM = Assembler(mSrc);
-    VirtualMachine mVm = VirtualMachine(mM.getByteCode(), 1024);
-    bool mHalted;
-    uint64_t mX, mY;
-    enum {JA, JAE, JB, JBE, JG, JGE, JL, JLE};
-    uint8_t mZ;
-    bool mSet;
-    bool mRes;
+
+static auto cmpTestSrcAssembler = Assembler(cmpTestSrc);
+VirtualMachine CmpTest::mVm = VirtualMachine(cmpTestSrcAssembler.getByteCode(), 1024);
+
+enum {JA, JAE, JB, JBE, JG, JGE, JL, JLE};
+
+TEST_P(CmpTest, tsts)
+{
+    const auto& param = GetParam();
+    test(param.a, param.b, param.c);
+    EXPECT_TRUE(true);
+    EXPECT_EQ(mRes, param.res);
+}
+
+CmpTestStruct cmptestvals[] = {
+    CmpTestStruct(   0,    0,  JA, false),
+    CmpTestStruct( 100,    0,  JA, true),
+    CmpTestStruct(   2,    2, JAE, true),
+    CmpTestStruct( 200,    0, JAE, true),
+    CmpTestStruct(   0,  222, JAE, false),
+    CmpTestStruct( 200, -200,  JG, true),
+    CmpTestStruct(-200,  200,  JG, false),
+    CmpTestStruct(-200, -200, JGE, true),
+    CmpTestStruct(   1,    1, JGE, true),
+    CmpTestStruct(  -1,    1, JGE, false),
+    CmpTestStruct(-200,   -1,  JL, true),
+    CmpTestStruct(  12,    1,  JL, false),
+    CmpTestStruct(-123, -123, JLE, true),
+    CmpTestStruct(-321,    1, JLE, true),
+    CmpTestStruct( 321,   -1, JLE, false)
 };
 
-TEST_F(CmpTest, tsts)
-{
-    test(0, 0, JA);
-    EXPECT_TRUE(true);
-    EXPECT_EQ(mRes, false);
-
-    test(0, 0, JAE);
-    EXPECT_TRUE(true);
-    EXPECT_EQ(mRes, true);
-}
+INSTANTIATE_TEST_CASE_P(CmpTest, CmpTest, ValuesIn(cmptestvals));
