@@ -5,6 +5,11 @@
 #include <type_traits>
 #include <algorithm>
 #include <cstring>
+#include <cstdint>
+#include <functional>
+#include <sstream>
+#include <stdexcept>
+#include <tuple>
 #include <string>
 #include <vector>
 #include <regex>
@@ -602,65 +607,71 @@ private:
         else if ("add"==ins)
         {
             if (OperandType::R64==at && OperandType::R64==bt)
-                return encodeMov8_8<I_ADD_R64_I64_T>(a, b);
+                return encodeMov8_8<I_ADD_R64_R64_T>(a, b);
             if (OperandType::R64==at && (OperandType::I64==bt||OperandType::I32==bt||OperandType::I16==bt||OperandType::I8==bt))
                 return encodeMov8_S<I_ADD_R64_I64_T>(a, b);
         }
         else if ("sub"==ins)
         {
             if (OperandType::R64==at && OperandType::R64==bt)
-                return encodeMov8_8<I_SUB_R64_I64_T>(a, b);
+                return encodeMov8_8<I_SUB_R64_R64_T>(a, b);
             if (OperandType::R64==at && (OperandType::I64==bt||OperandType::I32==bt||OperandType::I16==bt||OperandType::I8==bt))
                 return encodeMov8_S<I_SUB_R64_I64_T>(a, b);
         }
         else if ("mul"==ins)
         {
             if (OperandType::R64==at && OperandType::R64==bt)
-                return encodeMov8_8<I_MUL_R64_I64_T>(a, b);
+                return encodeMov8_8<I_MUL_R64_R64_T>(a, b);
             if (OperandType::R64==at && (OperandType::I64==bt||OperandType::I32==bt||OperandType::I16==bt||OperandType::I8==bt))
                 return encodeMov8_S<I_MUL_R64_I64_T>(a, b);
         }
         else if ("div"==ins)
         {
             if (OperandType::R64==at && OperandType::R64==bt)
-                return encodeMov8_8<I_DIV_R64_I64_T>(a, b);
+                return encodeMov8_8<I_DIV_R64_R64_T>(a, b);
             if (OperandType::R64==at && (OperandType::I64==bt||OperandType::I32==bt||OperandType::I16==bt||OperandType::I8==bt))
                 return encodeMov8_S<I_DIV_R64_I64_T>(a, b);
         }
         else if ("sar"==ins)
         {
+            if (OperandType::R64==at && OperandType::R64==bt)
+                return encodeMov8_8<I_SAR_R64_R64_T>(a, b);
             if (OperandType::R64==at && OperandType::I8==bt)
-                return encodeMov8_S<I_SAR_R64_R64_T>(a, b);
+                return encodeMov8_S<I_SAR_R64_I8_T>(a, b);
         }
         else if ("shr"==ins)
         {
+            if (OperandType::R64==at && OperandType::R64==bt)
+                return encodeMov8_8<I_SHR_R64_R64_T>(a, b);
             if (OperandType::R64==at && OperandType::I8==bt)
-                return encodeMov8_S<I_SHR_R64_R64_T>(a, b);
+                return encodeMov8_S<I_SHR_R64_I8_T>(a, b);
         }
         else if ("shl"==ins)
         {
+            if (OperandType::R64==at && OperandType::R64==bt)
+                return encodeMov8_8<I_SHL_R64_R64_T>(a, b);
             if (OperandType::R64==at && OperandType::I8==bt)
-                return encodeMov8_S<I_SHL_R64_R64_T>(a, b);
+                return encodeMov8_S<I_SHL_R64_I8_T>(a, b);
         }
         else if ("and"==ins)
         {
             if (OperandType::R64==at && OperandType::R64==bt)
                 return encodeMov8_8<I_AND_R64_R64_T>(a, b);
-            if (OperandType::R64==at && OperandType::I8==bt)
+            if (OperandType::R64==at && (OperandType::I64==bt||OperandType::I32==bt||OperandType::I16==bt||OperandType::I8==bt))
                 return encodeMov8_S<I_AND_R64_I64_T>(a, b);
         }
         else if ("or"==ins)
         {
             if (OperandType::R64==at && OperandType::R64==bt)
                 return encodeMov8_8<I_OR_R64_R64_T>(a, b);
-            if (OperandType::R64==at && OperandType::I8==bt)
+            if (OperandType::R64==at && (OperandType::I64==bt||OperandType::I32==bt||OperandType::I16==bt||OperandType::I8==bt))
                 return encodeMov8_S<I_OR_R64_I64_T>(a, b);
         }
         else if ("xor"==ins)
         {
             if (OperandType::R64==at && OperandType::R64==bt)
                 return encodeMov8_8<I_XOR_R64_R64_T>(a, b);
-            if (OperandType::R64==at && OperandType::I8==bt)
+            if (OperandType::R64==at && (OperandType::I64==bt||OperandType::I32==bt||OperandType::I16==bt||OperandType::I8==bt))
                 return encodeMov8_S<I_XOR_R64_I64_T>(a, b);
         }
         else if ("not"==ins)
@@ -679,13 +690,13 @@ private:
         {
             if (OperandType::R64==at && OperandType::R64==bt)
                 return encodeMov8_8<I_CMP_R64_R64_T>(a, b);
-            if (OperandType::R64==at && OperandType::I8==bt)
+            if (OperandType::R64==at && (OperandType::I64==bt||OperandType::I32==bt||OperandType::I16==bt||OperandType::I8==bt))
                 return encodeMov8_S<I_CMP_R64_I64_T>(a, b);
         }
         else if ("je"==ins)
         {
             if (OperandType::R64==at)
-                return encodeInsS<I_JE_R64_T>(a);
+                return encodeIns8<I_JE_R64_T>(a);
             if (OperandType::I64==at)
                 return encodeInsS<I_JE_I64_T>(a);
             if (OperandType::IN64==at)
@@ -694,7 +705,7 @@ private:
         else if ("jg"==ins)
         {
             if (OperandType::R64==at)
-                return encodeInsS<I_JG_R64_T>(a);
+                return encodeIns8<I_JG_R64_T>(a);
             if (OperandType::I64==at)
                 return encodeInsS<I_JG_I64_T>(a);
             if (OperandType::IN64==at)
@@ -703,7 +714,7 @@ private:
         else if ("jge"==ins)
         {
             if (OperandType::R64==at)
-                return encodeInsS<I_JGE_R64_T>(a);
+                return encodeIns8<I_JGE_R64_T>(a);
             if (OperandType::I64==at)
                 return encodeInsS<I_JGE_I64_T>(a);
             if (OperandType::IN64==at)
@@ -712,7 +723,7 @@ private:
         else if ("jl"==ins)
         {
             if (OperandType::R64==at)
-                return encodeInsS<I_JL_R64_T>(a);
+                return encodeIns8<I_JL_R64_T>(a);
             if (OperandType::I64==at)
                 return encodeInsS<I_JL_I64_T>(a);
             if (OperandType::IN64==at)
@@ -721,7 +732,7 @@ private:
         else if ("jle"==ins)
         {
             if (OperandType::R64==at)
-                return encodeInsS<I_JLE_R64_T>(a);
+                return encodeIns8<I_JLE_R64_T>(a);
             if (OperandType::I64==at)
                 return encodeInsS<I_JLE_I64_T>(a);
             if (OperandType::IN64==at)
@@ -730,7 +741,7 @@ private:
         else if ("ja"==ins)
         {
             if (OperandType::R64==at)
-                return encodeInsS<I_JA_R64_T>(a);
+                return encodeIns8<I_JA_R64_T>(a);
             if (OperandType::I64==at)
                 return encodeInsS<I_JA_I64_T>(a);
             if (OperandType::IN64==at)
@@ -739,7 +750,7 @@ private:
         else if ("jae"==ins)
         {
             if (OperandType::R64==at)
-                return encodeInsS<I_JAE_R64_T>(a);
+                return encodeIns8<I_JAE_R64_T>(a);
             if (OperandType::I64==at)
                 return encodeInsS<I_JAE_I64_T>(a);
             if (OperandType::IN64==at)
@@ -748,7 +759,7 @@ private:
         else if ("jb"==ins)
         {
             if (OperandType::R64==at)
-                return encodeInsS<I_JB_R64_T>(a);
+                return encodeIns8<I_JB_R64_T>(a);
             if (OperandType::I64==at)
                 return encodeInsS<I_JB_I64_T>(a);
             if (OperandType::IN64==at)
@@ -757,7 +768,7 @@ private:
         else if ("jbe"==ins)
         {
             if (OperandType::R64==at)
-                return encodeInsS<I_JBE_R64_T>(a);
+                return encodeIns8<I_JBE_R64_T>(a);
             if (OperandType::I64==at)
                 return encodeInsS<I_JBE_I64_T>(a);
             if (OperandType::IN64==at)
@@ -766,7 +777,7 @@ private:
         else if ("call"==ins)
         {
             if (OperandType::R64==at)
-                return encodeInsS<I_CALL_R64_T>(a);
+                return encodeIns8<I_CALL_R64_T>(a);
             if (OperandType::I64==at)
                 return encodeInsS<I_CALL_I64_T>(a);
             if (OperandType::IN64==at)
@@ -775,7 +786,7 @@ private:
         else if ("jmp"==ins)
         {
             if (OperandType::R64==at)
-                return encodeInsS<I_JMP_R64_T>(a);
+                return encodeIns8<I_JMP_R64_T>(a);
             if (OperandType::I64==at)
                 return encodeInsS<I_JMP_I64_T>(a);
             if (OperandType::IN64==at)
@@ -788,12 +799,12 @@ private:
         else if ("push"==ins)
         {
             if (OperandType::R64==at)
-                return encodeInsS<I_PUSH_R64_T>(a);
+                return encodeIns8<I_PUSH_R64_T>(a);
         }
         else if ("pop"==ins)
         {
             if (OperandType::R64==at)
-                return encodeInsS<I_POP_R64_T>(a);
+                return encodeIns8<I_POP_R64_T>(a);
         }
         else if ("syscall"==ins)
         {
@@ -941,14 +952,9 @@ private:
             constexpr uint64_t N = ~M;
 
             if (c == 0)
-            {
                 mFlagRegister |= FLAG_ZERO;
-                return;
-            }
             else
-            {
                 mFlagRegister &= ~FLAG_ZERO;
-            }
 
             if (c&N)
             {
@@ -1180,7 +1186,7 @@ private:
                 I_ADD_R64_R64_T i(pIns);
                 i.decode();
                 uint64_t a = mRegisters[i.get<0>()];
-                uint64_t b = mRegisters[i.get<0>()];
+                uint64_t b = mRegisters[i.get<1>()];
                 setAddFlags(a, b, mRegisters[i.get<0>()]);
                 mProgramCounter += I_ADD_R64_R64_T::size();
                 break;
@@ -1191,7 +1197,7 @@ private:
                 I_SUB_R64_R64_T i(pIns);
                 i.decode();
                 uint64_t a = mRegisters[i.get<0>()];
-                uint64_t b = mRegisters[i.get<0>()];
+                uint64_t b = mRegisters[i.get<1>()];
                 setSubFlags(a, b, mRegisters[i.get<0>()]);
                 mProgramCounter += I_SUB_R64_R64_T::size();
                 break;
@@ -1202,7 +1208,7 @@ private:
                 I_MUL_R64_R64_T i(pIns);
                 i.decode();
                 uint64_t a = mRegisters[i.get<0>()];
-                uint64_t b = mRegisters[i.get<0>()];
+                uint64_t b = mRegisters[i.get<1>()];
                 uint64_t c = a * b;
                 mRegisters[i.get<0>()] = c;
                 mProgramCounter += I_MUL_R64_R64_T::size();
@@ -1214,7 +1220,7 @@ private:
                 I_DIV_R64_R64_T i(pIns);
                 i.decode();
                 uint64_t a = mRegisters[i.get<0>()];
-                uint64_t b = mRegisters[i.get<0>()];
+                uint64_t b = mRegisters[i.get<1>()];
                 uint64_t c = a / b;
                 mRegisters[i.get<0>()] = c;
                 mRegisters[0] = a % b;
@@ -1309,9 +1315,9 @@ private:
             {
                 I_SAR_R64_I8_T i(pIns);
                 i.decode();
-                uint64_t a = mRegisters[i.get<0>()];
-                uint8_t  b = i.get<1>();
-                uint64_t c = a >> b;
+                int64_t a = static_cast<int64_t>(mRegisters[i.get<0>()]);
+                uint8_t b = i.get<1>();
+                uint64_t c = static_cast<uint64_t>(a >> b);
                 mRegisters[i.get<0>()] = c;
                 mProgramCounter += I_SAR_R64_I8_T::size();
                 break;
@@ -1403,7 +1409,7 @@ private:
                 i.decode();
                 uint64_t a = mRegisters[i.get<0>()];
                 uint64_t b = i.get<1>();
-                uint64_t c = a ^ b;
+                uint64_t c = a & b;
                 mRegisters[i.get<0>()] = c;
                 mProgramCounter += I_AND_R64_I64_T::size();
                 break;
@@ -1415,7 +1421,7 @@ private:
                 i.decode();
                 uint64_t a = mRegisters[i.get<0>()];
                 uint64_t b = i.get<1>();
-                uint64_t c = a ^ b;
+                uint64_t c = a | b;
                 mRegisters[i.get<0>()] = c;
                 mProgramCounter += I_OR_R64_I64_T::size();
                 break;
@@ -1738,8 +1744,8 @@ private:
                 I_PUSH_R64_T i(pIns);
                 i.decode();
                 uint64_t pushData = mRegisters[i.get<0>()];
+                mStackPointer -= sizeof(pushData);
                 std::memcpy(mByteCode.data() + mStackPointer, &pushData, sizeof(pushData));
-                mStackPointer += sizeof(pushData);
                 mProgramCounter += I_PUSH_R64_T::size();
                 break;
             }
@@ -1751,7 +1757,7 @@ private:
                 uint64_t pushData;
                 std::memcpy(&pushData, mByteCode.data() + mStackPointer, sizeof(pushData));
                 mRegisters[i.get<0>()] = pushData;
-                mStackPointer -= sizeof(pushData);
+                mStackPointer += sizeof(pushData);
                 mProgramCounter += I_POP_R64_T::size();
                 break;
             }
@@ -1762,7 +1768,7 @@ private:
                 auto callId = mRegisters[0];
                 auto foundIt = mSyscallHandler.find(callId);
                 if (foundIt==mSyscallHandler.end())
-                    std::runtime_error(std::string{}+"unhandled syscall: "+std::to_string(callId)+
+                    throw std::runtime_error(std::string{}+"unhandled syscall: "+std::to_string(callId)+
                         " at pc="+std::to_string(mProgramCounter));
                 foundIt->second(mRegisters, mByteCode);
                 mProgramCounter += I_SYSCALL_T::size();

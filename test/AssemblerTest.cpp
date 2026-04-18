@@ -185,3 +185,41 @@ TEST_F(AssemblerTest, should_generateInstruction_movsx)
         "15015c00000000000000"  //  movsx b, qword ptr[after_main]
     );
 }
+
+TEST_F(AssemblerTest, should_generateInstruction_llvm_backend_subset_encoding)
+{
+    std::string src = R"(
+            main:
+                mov a, b
+                mov c, 255
+                mov d, 65535
+                mov e, 4294967295
+                mov f, -1
+                add g, h
+                add i, -1
+                sub j, k
+                sub l, 1
+                call target
+                jmp target
+                ret
+                syscall
+            target:
+        )";
+
+    Assembler m(src);
+    EXPECT_EQ(hexify(m.getByteCode().data(), m.getByteCode().size()),
+        "010001"                // mov a, b
+        "0202ff"                // mov c, 255
+        "0303ffff"              // mov d, 65535
+        "0404ffffffff"          // mov e, 4294967295
+        "0505ffffffffffffffff"  // mov f, -1
+        "1e0607"                // add g, h
+        "2208ffffffffffffffff"  // add i, -1
+        "1f090a"                // sub j, k
+        "230b0100000000000000"  // sub l, 1
+        "4c4800000000000000"    // call target
+        "4d4800000000000000"    // jmp target
+        "4e"                    // ret
+        "51"                    // syscall
+    );
+}
